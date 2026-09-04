@@ -218,8 +218,8 @@ async function boot() {
     customAttribution: state.config.attribution,
   }));
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left");
-  // Basemap layer switcher: Dark (default) / Satellite / Street (top-right)
-  map.addControl(new BasemapSwitcher(), "top-right");
+  // Keep the switcher on the map side; the fixed sidebar covers top-right.
+  map.addControl(new BasemapSwitcher(), "top-left");
 
   // 3) Basemap resilience — never a blank map:
   //    (a) a vector style URL that fails to load → swap to the inline raster
