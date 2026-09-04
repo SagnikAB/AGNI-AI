@@ -1,0 +1,13 @@
+# Secrets — never commit the real .env file
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store
