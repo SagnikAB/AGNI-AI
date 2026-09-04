@@ -93,6 +93,8 @@ const ESRI_DARK_TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 const ESRI_SATELLITE_TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const ESRI_STREET_TILES =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
 const OSM_RASTER_FALLBACK = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 // Combined attribution covers every basemap offered by the switcher below
 const BASEMAP_ATTRIBUTION =
@@ -103,7 +105,7 @@ const BASEMAP_ATTRIBUTION =
 const BASEMAPS = {
   dark:      { label: "🌙 Dark (default)", url: ESRI_DARK_TILES },
   satellite: { label: "🛰 Satellite (Esri imagery)", url: ESRI_SATELLITE_TILES },
-  street:    { label: "🧭 Street (OpenStreetMap)", url: OSM_RASTER_FALLBACK },
+  street:    { label: "🧭 Street (Esri road map)", url: ESRI_STREET_TILES },
 };
 
 // Minimal basemap layer switcher — MapLibre has no built-in `L.control.layers`
