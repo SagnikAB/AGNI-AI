@@ -669,19 +669,20 @@ app.get("/favicon.ico", (req, res) => {
   );
 });
 
-// Static assets & frontend hosting with no-cache headers in development
+// Static assets & frontend hosting with no-cache headers
 app.use((req, res, next) => {
-  if (req.path.endsWith(".html") || req.path.endsWith(".js") || req.path === "/") {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  }
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   next();
 });
 
-app.use(express.static(path.resolve(__dirname)));
-
 app.get("/", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.sendFile(path.resolve(__dirname, "index.html"));
 });
+
+app.use(express.static(path.resolve(__dirname)));
 
 // Start background refresh & listen on 0.0.0.0:3000
 refreshPipeline().then(() => {
