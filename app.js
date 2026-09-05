@@ -16,12 +16,11 @@
 "use strict";
 
 // -----------------------------------------------------------------------------
-// Backend base URL — ALL fetches are prefixed with this absolute address.
-// The dashboard may be served from a different origin/port than the FastAPI
-// service (e.g. file:// or a static host), where RELATIVE /api paths would
-// 404; an absolute base fixes that class of bug (404 relative pathing).
+// Backend base URL — uses current origin so it works in preview and port 3000
 // -----------------------------------------------------------------------------
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = typeof window !== "undefined" && window.location && window.location.origin && window.location.origin.startsWith("http")
+  ? window.location.origin
+  : "";
 
 // -----------------------------------------------------------------------------
 // Dashboard state (module-level, read/written by every handler below)

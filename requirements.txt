@@ -1,9 +1,0 @@
-# Python runtime dependencies for the AGNI-AI (SIH 2026 PS 26162) industrial-fire platform.
-# Install with: pip install -r requirements.txt
-# (Python >= 3.10 required)
-fastapi>=0.111
-uvicorn[standard]>=0.30
-geopandas>=0.14
-pandas>=2.2
-shapely>=2.0
-requests>=2.32
