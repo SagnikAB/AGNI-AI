@@ -660,7 +660,23 @@ app.get("/healthz", (req, res) => {
   });
 });
 
-// Static assets & frontend hosting
+// Favicon handler to avoid 404
+app.get("/favicon.ico", (req, res) => {
+  res.setHeader("Content-Type", "image/svg+xml");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.send(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔥</text></svg>`
+  );
+});
+
+// Static assets & frontend hosting with no-cache headers in development
+app.use((req, res, next) => {
+  if (req.path.endsWith(".html") || req.path.endsWith(".js") || req.path === "/") {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  }
+  next();
+});
+
 app.use(express.static(path.resolve(__dirname)));
 
 app.get("/", (req, res) => {

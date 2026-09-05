@@ -16,11 +16,9 @@
 "use strict";
 
 // -----------------------------------------------------------------------------
-// Backend base URL — uses current origin so it works in preview and port 3000
+// Backend base URL — empty string uses relative paths against current origin
 // -----------------------------------------------------------------------------
-const API_BASE_URL = typeof window !== "undefined" && window.location && window.location.origin && window.location.origin.startsWith("http")
-  ? window.location.origin
-  : "";
+const API_BASE_URL = "";
 
 // -----------------------------------------------------------------------------
 // Dashboard state (module-level, read/written by every handler below)
