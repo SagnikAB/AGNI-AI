@@ -559,14 +559,18 @@ async function boot() {
   });
 }
 
-async function loadData() {
-  setStatus("Loading data…");
+async function loadData(dateFrom = state.dateFrom, dateTo = state.dateTo) {
+  setStatus("Querying thermal anomalies…");
   try {
     let summary, anomalies;
+    const qParts = [];
+    if (dateFrom) qParts.push(`date_from=${encodeURIComponent(dateFrom)}`);
+    if (dateTo) qParts.push(`date_to=${encodeURIComponent(dateTo)}`);
+    const qStr = qParts.length ? `?${qParts.join("&")}` : "";
+
     try {
       summary = await api("/api/v1/stats/summary");
-      anomalies = await api(
-        `/api/v1/thermal-anomalies?date_from=${summary.date_min}&date_to=${summary.date_max}`);
+      anomalies = await api(`/api/v1/thermal-anomalies${qStr}`);
     } catch (netErr) {
       console.warn("API request fallback to built-in synthetic dataset:", netErr);
       const fallback = buildClientFallbackDataset();
@@ -589,8 +593,9 @@ async function loadData() {
 
     renderSummaryChips();
     renderMeta();
+    const wDays = summary.observation_window_days || summary.window_days || 5;
     setStatus(summary.total_detections
-      ? `Ready — ${summary.total_detections} detections across ${summary.window_days} days`
+      ? `Ready — ${summary.total_detections} detections across ${wDays} days`
       : "No detections in the observation window");
   } catch (err) {
     setStatus(`Data unavailable — ${err.message}`, true);
@@ -688,9 +693,14 @@ function renderInspector(p) {
       `<small style="color:#8aa0c4">(class ${p.class})</small>`;
   }
   if ($("insp-body")) {
-    $("insp-body").innerHTML = INSP_ROWS
+    const rowsHtml = INSP_ROWS
       .map(([label, fmt]) => `<div class="kv"><b>${label}</b><span>${fmt(p)}</span></div>`)
       .join("");
+    const caveatHtml =
+      `<div style="margin-top:14px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid rgba(255,255,255,0.06);font-size:11px;line-height:1.4;color:#8aa0c4;">` +
+      `<em>Note: Satellite detections represent a cloud-cover lower bound. Persistence reflects available cloud-free observations within the window.</em>` +
+      `</div>`;
+    $("insp-body").innerHTML = rowsHtml + caveatHtml;
   }
   panel.style.display = "block";
 }
@@ -744,8 +754,18 @@ function bindFilters() {
     });
   }
 
-  if ($("dfrom")) $("dfrom").addEventListener("change", (e) => { state.dateFrom = e.target.value; applyFilters(); });
-  if ($("dto")) $("dto").addEventListener("change", (e) => { state.dateTo = e.target.value; applyFilters(); });
+  if ($("dfrom")) {
+    $("dfrom").addEventListener("change", (e) => {
+      state.dateFrom = e.target.value;
+      loadData(state.dateFrom, state.dateTo);
+    });
+  }
+  if ($("dto")) {
+    $("dto").addEventListener("change", (e) => {
+      state.dateTo = e.target.value;
+      loadData(state.dateFrom, state.dateTo);
+    });
+  }
 
   if ($("close-inspector")) $("close-inspector").addEventListener("click", () => renderInspector(null));
 
@@ -755,13 +775,12 @@ function bindFilters() {
       btn.disabled = true;
       setStatus("Refreshing data from providers…");
       try {
-        await api("/api/v1/refresh", { method: "POST" });
+        const res = await api("/api/v1/refresh", { method: "POST" });
         await loadData();
-        setStatus("Data refreshed ✓");
+        setStatus(`Data refreshed ✓ (${res.total_detections || 0} detections)`);
       } catch (err) {
-        console.warn("Refresh fallback:", err);
-        await loadData();
-        setStatus("Data refreshed ✓");
+        // FR-UI-05: surface 429 / 502 error messages verbatim
+        setStatus(err.message, true);
       } finally {
         btn.disabled = false;
       }

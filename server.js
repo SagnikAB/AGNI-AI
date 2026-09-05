@@ -75,27 +75,118 @@ function createRng(seed = 42) {
   };
 }
 
-function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+// ==============================================================================
+// Dynamic UTM Projection (EPSG:326xx) & Metric Geodesy (FR-PRX-01..03)
+// ==============================================================================
+function projectWgs84ToUtm(lat, lon, centralLon) {
+  const a = 6378137.0;
+  const f = 1.0 / 298.257223563;
+  const e2 = 2 * f - f * f;
+  const e_prime2 = e2 / (1.0 - e2);
+  const k0 = 0.9996;
+
+  const latRad = (lat * Math.PI) / 180;
+  const lonRad = (lon * Math.PI) / 180;
+  const lon0Rad = (centralLon * Math.PI) / 180;
+
+  const sinLat = Math.sin(latRad);
+  const cosLat = Math.cos(latRad);
+  const tanLat = Math.tan(latRad);
+
+  const n = a / Math.sqrt(1.0 - e2 * sinLat * sinLat);
+  const t = tanLat * tanLat;
+  const c = e_prime2 * cosLat * cosLat;
+  const A = (lonRad - lon0Rad) * cosLat;
+
+  const m0 = 1.0 - e2 / 4.0 - (3.0 * e2 * e2) / 64.0 - (5.0 * e2 * e2 * e2) / 256.0;
+  const m1 = (3.0 * e2) / 8.0 + (3.0 * e2 * e2) / 32.0 + (45.0 * e2 * e2 * e2) / 1024.0;
+  const m2 = (15.0 * e2 * e2) / 256.0 + (45.0 * e2 * e2 * e2) / 1024.0;
+  const m3 = (35.0 * e2 * e2) / 3072.0;
+
+  const M =
+    a *
+    (m0 * latRad -
+      m1 * Math.sin(2.0 * latRad) +
+      m2 * Math.sin(4.0 * latRad) -
+      m3 * Math.sin(6.0 * latRad));
+
+  const x =
+    k0 *
+      n *
+      (A +
+        ((1.0 - t + c) * Math.pow(A, 3)) / 6.0 +
+        ((5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * e_prime2) * Math.pow(A, 5)) / 120.0) +
+    500000.0;
+
+  let y =
+    k0 *
+    (M +
+      n *
+        tanLat *
+        (Math.pow(A, 2) / 2.0 +
+          ((5.0 - t + 9.0 * c + 4.0 * c * c) * Math.pow(A, 4)) / 24.0 +
+          ((61.0 - 58.0 * t + t * t + 600.0 * c - 330.0 * e_prime2) * Math.pow(A, 6)) / 720.0));
+  if (lat < 0) y += 10000000.0;
+
+  return [x, y];
 }
 
-function distanceToPlantMeters(lat, lon, plant) {
-  if (lon >= plant.minx && lon <= plant.maxx && lat >= plant.miny && lat <= plant.maxy) {
-    return 0;
+function distancePointToPlantUtm(ptX, ptY, plant, centralLon) {
+  if (plant.coordinates && plant.coordinates.length >= 3) {
+    const utmPoly = plant.coordinates.map((p) => projectWgs84ToUtm(p[1], p[0], centralLon));
+    let inside = false;
+    const nVert = utmPoly.length;
+    let j = nVert - 1;
+    for (let i = 0; i < nVert; i++) {
+      const xi = utmPoly[i][0];
+      const yi = utmPoly[i][1];
+      const xj = utmPoly[j][0];
+      const yj = utmPoly[j][1];
+      if (yi > ptY !== yj > ptY && ptX < ((xj - xi) * (ptY - yi)) / (yj - yi + 1e-12) + xi) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    if (inside) return 0.0;
+
+    let minDist = Infinity;
+    for (let i = 0; i < nVert; i++) {
+      const x1 = utmPoly[i][0];
+      const y1 = utmPoly[i][1];
+      const x2 = utmPoly[(i + 1) % nVert][0];
+      const y2 = utmPoly[(i + 1) % nVert][1];
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const l2 = dx * dx + dy * dy;
+      let d;
+      if (l2 === 0) {
+        d = Math.hypot(ptX - x1, ptY - y1);
+      } else {
+        const t = Math.max(0, Math.min(1, ((ptX - x1) * dx + (ptY - y1) * dy) / l2));
+        const projX = x1 + t * dx;
+        const projY = y1 + t * dy;
+        d = Math.hypot(ptX - projX, ptY - projY);
+      }
+      if (d < minDist) minDist = d;
+    }
+    return minDist;
   }
-  const closestLon = Math.max(plant.minx, Math.min(plant.maxx, lon));
-  const closestLat = Math.max(plant.miny, Math.min(plant.maxy, lat));
-  return haversineDistanceMeters(lat, lon, closestLat, closestLon);
+
+  // Fallback to bounding box projection
+  const [minUx, minUy] = projectWgs84ToUtm(plant.miny, plant.minx, centralLon);
+  const [maxUx, maxUy] = projectWgs84ToUtm(plant.maxy, plant.maxx, centralLon);
+  const uxMin = Math.min(minUx, maxUx);
+  const uxMax = Math.max(minUx, maxUx);
+  const uyMin = Math.min(minUy, maxUy);
+  const uyMax = Math.max(minUy, maxUy);
+
+  if (ptX >= uxMin && ptX <= uxMax && ptY >= uyMin && ptY <= uyMax) {
+    return 0.0;
+  }
+
+  const closestX = Math.max(uxMin, Math.min(uxMax, ptX));
+  const closestY = Math.max(uyMin, Math.min(uyMax, ptY));
+  return Math.hypot(ptX - closestX, ptY - closestY);
 }
 
 function getSnapStep(source) {
@@ -246,9 +337,84 @@ function buildDemoAnomalies(windowDays = PERSISTENCE_WINDOW_DAYS) {
 }
 
 // ==============================================================================
-// Classification Pipeline
+// OSM Overpass Industrial Footprint Ingestion (FR-ING-04..06)
 // ==============================================================================
-function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS) {
+async function fetchOverpassIndustrial(points, radiusM = OSM_SEARCH_RADIUS_M) {
+  if (!points || !points.length) return PLANTS;
+  const lats = points.map((p) => p.latitude);
+  const lons = points.map((p) => p.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+  const midLat = (minLat + maxLat) / 2.0;
+
+  const dLat = radiusM / 111320.0;
+  const cosLat = Math.cos((midLat * Math.PI) / 180.0);
+  const dLon = radiusM / (111320.0 * Math.max(0.1, cosLat));
+
+  const south = Math.max(-90.0, minLat - dLat);
+  const north = Math.min(90.0, maxLat + dLat);
+  const west = Math.max(-180.0, minLon - dLon);
+  const east = Math.min(180.0, maxLon + dLon);
+
+  const query = `[out:json][timeout:60]; (
+    way["industrial"](${south},${west},${north},${east});
+    way["landuse"="industrial"](${south},${west},${north},${east});
+    way["power"="plant"](${south},${west},${north},${east});
+    way["man_made"="flare"](${south},${west},${north},${east});
+    relation["industrial"](${south},${west},${north},${east});
+    relation["landuse"="industrial"](${south},${west},${north},${east});
+    relation["power"="plant"](${south},${west},${north},${east});
+    relation["man_made"="flare"](${south},${west},${north},${east});
+  ); out geom;`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    const resp = await fetch(OVERPASS_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "AGNI-AI/1.0 (SIH PS 26162 NTRO)",
+      },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (resp.ok) {
+      const data = await resp.json();
+      const polys = [];
+      for (const elem of data.elements || []) {
+        if (elem.geometry && elem.geometry.length >= 3) {
+          const coords = elem.geometry.map((g) => [g.lon, g.lat]);
+          const tags = elem.tags || {};
+          const name = tags.name || tags.description || tags.operator || "Industrial Facility (OSM)";
+          const xs = coords.map((c) => c[0]);
+          const ys = coords.map((c) => c[1]);
+          polys.push({
+            id: elem.id,
+            name,
+            coordinates: coords,
+            minx: Math.min(...xs),
+            maxx: Math.max(...xs),
+            miny: Math.min(...ys),
+            maxy: Math.max(...ys),
+          });
+        }
+      }
+      if (polys.length) return polys;
+    }
+  } catch (e) {
+    console.warn("Overpass fetch fallback to demo plants:", e.message);
+  }
+  return PLANTS;
+}
+
+// ==============================================================================
+// Classification Pipeline (FR-CLS-01..07)
+// ==============================================================================
+function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS, industrialSites = PLANTS) {
   if (!rawRows || !rawRows.length) {
     return [];
   }
@@ -273,7 +439,12 @@ function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS) {
   const allDaysInWindow = new Set(rawRows.map((r) => r.acq_date)).size;
   const denomWindow = Math.max(1, Math.min(windowDays, allDaysInWindow));
 
-  // 3) Proximity to Nearest Industrial Plant & Classification
+  // 3) Dynamic UTM Central Meridian from Dataset Centroid
+  const midLon = rawRows.reduce((acc, r) => acc + r.longitude, 0) / rawRows.length;
+  const utmZone = Math.floor((midLon + 180.0) / 6.0) + 1;
+  const centralLon = (utmZone - 1) * 6 - 180 + 3;
+
+  // 4) Proximity to Nearest Industrial Plant & Classification
   const classifiedRows = [];
 
   for (const row of rawRows) {
@@ -281,11 +452,12 @@ function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS) {
     const persistenceDays = pixelDaySets.get(key) ? pixelDaySets.get(key).size : 1;
     const persistenceScore = Math.min(1.0, persistenceDays / denomWindow);
 
-    // Compute nearest plant
+    // Compute metric distance in UTM
+    const [ux, uy] = projectWgs84ToUtm(row.latitude, row.longitude, centralLon);
     let minDistance = Infinity;
     let closestPlant = null;
-    for (const plant of PLANTS) {
-      const dist = distanceToPlantMeters(row.latitude, row.longitude, plant);
+    for (const plant of industrialSites) {
+      const dist = distancePointToPlantUtm(ux, uy, plant, centralLon);
       if (dist < minDistance) {
         minDistance = dist;
         closestPlant = plant;
@@ -352,6 +524,7 @@ function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS) {
       instrument: row.instrument,
       daynight: row.daynight || "D",
       confidence_pct: confidencePct,
+      confidence_raw: String(row.confidence || "nominal"),
       proximity_m: proximityM != null ? Math.round(proximityM * 10) / 10 : null,
       persistence_days: persistenceDays,
       persistence_score: Math.round(persistenceScore * 100) / 100,
@@ -388,12 +561,15 @@ function toGeoJson(rows) {
       instrument: r.instrument,
       daynight: r.daynight,
       confidence_pct: r.confidence_pct,
+      confidence_raw: r.confidence_raw || "nominal",
       proximity_m: r.proximity_m,
       persistence_days: r.persistence_days,
       persistence_score: r.persistence_score,
       industry_name: r.industry_name,
       latitude: r.latitude,
       longitude: r.longitude,
+      snapped_lat: r.snapped_lat,
+      snapped_lon: r.snapped_lon,
     },
   }));
   return { type: "FeatureCollection", features };
@@ -404,9 +580,12 @@ function toGeoJson(rows) {
 // ==============================================================================
 const state = {
   anomalies: [],
+  industrial_sites: PLANTS,
+  industrial_sites_count: PLANTS.length,
   industrial_count: PLANTS.length,
   updated_at_utc: null,
   window_days: PERSISTENCE_WINDOW_DAYS,
+  observation_window_days: PERSISTENCE_WINDOW_DAYS,
   sources: [],
   demo_mode: demoMode,
   status: "initializing",
@@ -419,10 +598,17 @@ async function refreshPipeline() {
   lastRefreshAttempt = Date.now();
   try {
     let rows;
+    let industrialSites = PLANTS;
+
     if (!demoMode && MAP_KEY) {
       try {
-        // Attempt live FIRMS fetch
-        const firmsSources = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT", "MODIS_NRT"];
+        // Attempt live FIRMS fetch across all 4 NRT sources
+        const firmsSources = [
+          "VIIRS_SNPP_NRT",
+          "VIIRS_NOAA20_NRT",
+          "VIIRS_NOAA21_NRT",
+          "MODIS_NRT",
+        ];
         const fetchedRows = [];
         for (const src of firmsSources) {
           const url = `${FIRMS_BASE_URL}/api/area/csv/${MAP_KEY}/${src}/${AOI}/${PERSISTENCE_WINDOW_DAYS}`;
@@ -457,6 +643,7 @@ async function refreshPipeline() {
         }
         if (fetchedRows.length > 0) {
           rows = fetchedRows;
+          industrialSites = await fetchOverpassIndustrial(rows, OSM_SEARCH_RADIUS_M);
         } else {
           rows = buildDemoAnomalies(PERSISTENCE_WINDOW_DAYS);
         }
@@ -468,12 +655,15 @@ async function refreshPipeline() {
       rows = buildDemoAnomalies(PERSISTENCE_WINDOW_DAYS);
     }
 
-    const classified = classifyDataset(rows, PERSISTENCE_WINDOW_DAYS);
+    const classified = classifyDataset(rows, PERSISTENCE_WINDOW_DAYS, industrialSites);
     state.anomalies = classified;
-    state.industrial_count = PLANTS.length;
+    state.industrial_sites = industrialSites;
+    state.industrial_sites_count = industrialSites.length;
+    state.industrial_count = industrialSites.length;
     state.updated_at_utc = new Date().toISOString();
     state.sources = Array.from(new Set(classified.map((c) => c.source))).sort();
     state.window_days = PERSISTENCE_WINDOW_DAYS;
+    state.observation_window_days = PERSISTENCE_WINDOW_DAYS;
     state.status = "ready";
     state.last_error = null;
     return { ok: true, count: classified.length };
@@ -512,6 +702,7 @@ app.get("/api/v1/config/public", (req, res) => {
     demo_mode: state.demo_mode,
     aoi: AOI,
     window_days: state.window_days,
+    observation_window_days: state.window_days,
     default_center: [DEFAULT_CENTER_LON, DEFAULT_CENTER_LAT],
     default_zoom: DEFAULT_ZOOM,
     data_updated_at_utc: state.updated_at_utc,
@@ -519,12 +710,14 @@ app.get("/api/v1/config/public", (req, res) => {
   });
 });
 
-// Analytics Summary endpoint
+// Analytics Summary endpoint (FR-API-02)
 const getAnalyticsSummary = (req, res) => {
   if (!state.anomalies.length && state.status === "initializing") {
     return res.status(503).json({
-      message: "Data layer not ready yet",
-      reason: state.last_error || "initial refresh in progress",
+      detail: {
+        message: "Data layer not ready yet",
+        reason: state.last_error || "initial refresh in progress",
+      },
     });
   }
 
@@ -566,8 +759,11 @@ const getAnalyticsSummary = (req, res) => {
     by_class: byClass,
     sources: state.sources,
     updated_at_utc: state.updated_at_utc,
+    generated_at_utc: state.updated_at_utc,
     industrial_count: state.industrial_count,
+    industrial_sites_count: state.industrial_sites_count || state.industrial_count,
     window_days: state.window_days,
+    observation_window_days: state.window_days,
     demo_mode: state.demo_mode,
     status: state.status,
     total_detections: df.length,
@@ -580,12 +776,14 @@ const getAnalyticsSummary = (req, res) => {
 app.get("/api/v1/stats/summary", getAnalyticsSummary);
 app.get("/api/v1/analytics/summary", getAnalyticsSummary);
 
-// Filtered Thermal Anomalies endpoint (GeoJSON)
+// Filtered Thermal Anomalies endpoint (GeoJSON, FR-API-01)
 app.get("/api/v1/thermal-anomalies", (req, res) => {
   if (!state.anomalies.length && state.status === "initializing") {
     return res.status(503).json({
-      message: "Data layer not ready yet",
-      reason: state.last_error || "initial refresh in progress",
+      detail: {
+        message: "Data layer not ready yet",
+        reason: state.last_error || "initial refresh in progress",
+      },
     });
   }
 
@@ -622,7 +820,7 @@ app.get("/api/v1/thermal-anomalies", (req, res) => {
   res.json(toGeoJson(filtered));
 });
 
-// Refresh Endpoint
+// Refresh Endpoint (FR-API-04)
 app.post("/api/v1/refresh", async (req, res) => {
   const elapsedS = (Date.now() - lastRefreshAttempt) / 1000;
   if (elapsedS < REFRESH_MIN_INTERVAL_S) {
@@ -641,7 +839,7 @@ app.post("/api/v1/refresh", async (req, res) => {
     });
   }
 
-  res.json({
+  res.status(202).json({
     status: "ok",
     refreshed_at_utc: state.updated_at_utc,
     total_detections: state.anomalies.length,
@@ -689,12 +887,18 @@ refreshPipeline().then(() => {
   console.log(`[AGNI-AI] Initialized with ${state.anomalies.length} anomaly detections.`);
 });
 
-setInterval(() => {
-  if (!demoMode && MAP_KEY) {
-    refreshPipeline();
-  }
-}, REFRESH_TTL_MINUTES * 60 * 1000);
+const isDirectRun = process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+if (isDirectRun && !process.env.VERCEL) {
+  const timer = setInterval(() => {
+    if (!demoMode && MAP_KEY) {
+      refreshPipeline();
+    }
+  }, REFRESH_TTL_MINUTES * 60 * 1000);
+  timer.unref();
 
-app.listen(PORT, HOST, () => {
-  console.log(`[AGNI-AI] Server running on http://${HOST}:${PORT}`);
-});
+  app.listen(PORT, HOST, () => {
+    console.log(`[AGNI-AI] Server running on http://${HOST}:${PORT}`);
+  });
+}
+
+export default app;
