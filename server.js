@@ -578,17 +578,21 @@ function toGeoJson(rows) {
 // ==============================================================================
 // State & Pipeline In-Memory Cache
 // ==============================================================================
+// Pre-initialize synchronously so serverless cold-starts are immediately ready
+const initialDemoRows = buildDemoAnomalies(PERSISTENCE_WINDOW_DAYS);
+const initialClassified = classifyDataset(initialDemoRows, PERSISTENCE_WINDOW_DAYS, PLANTS);
+
 const state = {
-  anomalies: [],
+  anomalies: initialClassified,
   industrial_sites: PLANTS,
   industrial_sites_count: PLANTS.length,
   industrial_count: PLANTS.length,
-  updated_at_utc: null,
+  updated_at_utc: new Date().toISOString(),
   window_days: PERSISTENCE_WINDOW_DAYS,
   observation_window_days: PERSISTENCE_WINDOW_DAYS,
-  sources: [],
+  sources: Array.from(new Set(initialClassified.map((c) => c.source))).sort(),
   demo_mode: demoMode,
-  status: "initializing",
+  status: "ready",
   last_error: null,
 };
 

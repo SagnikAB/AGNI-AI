@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "build": "node -e \"console.log('Build complete')\""
+    "build": "node -e \"import('fs').then(fs => { fs.mkdirSync('public', { recursive: true }); fs.copyFileSync('index.html', 'public/index.html'); if (fs.existsSync('app.js')) fs.copyFileSync('app.js', 'public/app.js'); console.log('Build complete: public directory ready'); });\""
   },
   "dependencies": {
     "cors": "^2.8.5",
