@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
+    "lint": "node --check server.js api/index.js",
     "build": "node -e \"import('fs').then(fs => { fs.mkdirSync('public', { recursive: true }); fs.copyFileSync('index.html', 'public/index.html'); if (fs.existsSync('app.js')) fs.copyFileSync('app.js', 'public/app.js'); console.log('Build complete: public directory ready'); });\""
   },
   "dependencies": {
