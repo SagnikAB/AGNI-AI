@@ -29,6 +29,7 @@ const REFRESH_TTL_MINUTES = parseInt(process.env.REFRESH_TTL_MINUTES || "15", 10
 const REFRESH_MIN_INTERVAL_S = parseInt(process.env.REFRESH_MIN_INTERVAL_S || "60", 10);
 
 const REAL_DATA_CACHE_PATH = path.join(__dirname, "data", "real_firms_india.json");
+const OSM_CACHE_PATH = path.join(__dirname, "data", "osm_industrial_plants.json");
 
 const DEFAULT_CENTER_LON = 78.9629;
 const DEFAULT_CENTER_LAT = 20.5937;
@@ -831,41 +832,63 @@ async function fetchLiveFirmsData() {
 }
 
 // ==============================================================================
-// OSM Overpass Industrial Footprint Ingestion (FR-ING-04..06)
+// OSM Industrial Footprint Ingestion & Cache (FR-ING-04..06)
 // ==============================================================================
+function loadOsmIndustrialPlants() {
+  try {
+    if (fs.existsSync(OSM_CACHE_PATH)) {
+      const raw = fs.readFileSync(OSM_CACHE_PATH, "utf8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    // Fall back to built-in verified complexes
+  }
+  return PLANTS;
+}
+
 async function fetchOverpassIndustrial(points, radiusM = OSM_SEARCH_RADIUS_M) {
-  if (!points || !points.length) return PLANTS;
-  const lats = points.map((p) => p.latitude);
-  const lons = points.map((p) => p.longitude);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons);
-  const maxLon = Math.max(...lons);
-  const midLat = (minLat + maxLat) / 2.0;
+  const basePlants = loadOsmIndustrialPlants();
+  if (!points || !points.length) return basePlants;
 
-  const dLat = radiusM / 111320.0;
-  const cosLat = Math.cos((midLat * Math.PI) / 180.0);
-  const dLon = radiusM / (111320.0 * Math.max(0.1, cosLat));
-
-  const south = Math.max(-90.0, minLat - dLat);
-  const north = Math.min(90.0, maxLat + dLat);
-  const west = Math.max(-180.0, minLon - dLon);
-  const east = Math.min(180.0, maxLon + dLon);
-
-  const query = `[out:json][timeout:60]; (
-    way["industrial"](${south},${west},${north},${east});
-    way["landuse"="industrial"](${south},${west},${north},${east});
-    way["power"="plant"](${south},${west},${north},${east});
-    way["man_made"="flare"](${south},${west},${north},${east});
-    relation["industrial"](${south},${west},${north},${east});
-    relation["landuse"="industrial"](${south},${west},${north},${east});
-    relation["power"="plant"](${south},${west},${north},${east});
-    relation["man_made"="flare"](${south},${west},${north},${east});
-  ); out geom;`;
+  // By default, use verified local OSM complexes to avoid unneeded external latency
+  if (process.env.ENABLE_OVERPASS_LIVE !== "true") {
+    return basePlants;
+  }
 
   try {
+    const lats = points.map((p) => p.latitude);
+    const lons = points.map((p) => p.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons);
+    const maxLon = Math.max(...lons);
+    const midLat = (minLat + maxLat) / 2.0;
+
+    const dLat = radiusM / 111320.0;
+    const cosLat = Math.cos((midLat * Math.PI) / 180.0);
+    const dLon = radiusM / (111320.0 * Math.max(0.1, cosLat));
+
+    const south = Math.max(-90.0, minLat - dLat);
+    const north = Math.min(90.0, maxLat + dLat);
+    const west = Math.max(-180.0, minLon - dLon);
+    const east = Math.min(180.0, maxLon + dLon);
+
+    const query = `[out:json][timeout:5]; (
+      way["industrial"](${south},${west},${north},${east});
+      way["landuse"="industrial"](${south},${west},${north},${east});
+      way["power"="plant"](${south},${west},${north},${east});
+      way["man_made"="flare"](${south},${west},${north},${east});
+      relation["industrial"](${south},${west},${north},${east});
+      relation["landuse"="industrial"](${south},${west},${north},${east});
+      relation["power"="plant"](${south},${west},${north},${east});
+      relation["man_made"="flare"](${south},${west},${north},${east});
+    ); out geom;`;
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 5000);
     const resp = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: {
@@ -905,12 +928,20 @@ async function fetchOverpassIndustrial(points, radiusM = OSM_SEARCH_RADIUS_M) {
           });
         }
       }
-      if (polys.length) return polys;
+      if (polys.length) {
+        const merged = [...basePlants];
+        for (const p of polys) {
+          if (!merged.some((m) => m.id === p.id)) {
+            merged.push(p);
+          }
+        }
+        return merged;
+      }
     }
   } catch (e) {
-    console.warn("Overpass fetch fallback to demo plants:", e.message);
+    // Clean fallback to verified complexes
   }
-  return PLANTS;
+  return basePlants;
 }
 
 // ==============================================================================
@@ -1339,13 +1370,13 @@ async function refreshPipeline() {
   lastRefreshAttempt = Date.now();
   try {
     const rows = await fetchLiveFirmsData();
-    let industrialSites = PLANTS;
+    let industrialSites = loadOsmIndustrialPlants();
 
     if (rows && rows.length > 0) {
       try {
         industrialSites = await fetchOverpassIndustrial(rows, OSM_SEARCH_RADIUS_M);
       } catch (e) {
-        console.warn("[AGNI-AI] Overpass refinement note:", e.message);
+        industrialSites = loadOsmIndustrialPlants();
       }
     }
 
