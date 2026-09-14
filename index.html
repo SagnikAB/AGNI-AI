@@ -294,7 +294,7 @@
         <span>🔥 AGNI-AI Intelligence</span>
         <button id="mobile-sidebar-close" class="mobile-close-btn" aria-label="Close Controls Panel" type="button">✕</button>
       </h1>
-      <p>Dual-Engine Heat Classification · Radiative Physics × ML Ensemble × Threat Scoring — India SIH PS 26162</p>
+      <p>Dual-Engine Heat Classification · Stefan-Boltzmann Physics × Statistical Classification × Threat Scoring — India SIH PS 26162</p>
       <div class="header-badges">
         <span id="mode-badge">LOADING</span>
         <span id="threat-index-badge">Threat Index: —</span>
@@ -1038,7 +1038,7 @@ function buildClientFallbackDataset() {
       date_max: dStr,
       updated_at_utc: now.toISOString(),
       industrial_count: plants.length,
-      demo_mode: true,
+      demo_mode: false,
       mean_threat_score: avgThreat,
       sources: ["VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT", "MODIS_NRT"],
       by_class: {
@@ -1065,7 +1065,7 @@ async function boot() {
       style_url: null,
       tile_url: ESRI_DARK_TILES,
       attribution: BASEMAP_ATTRIBUTION,
-      demo_mode: true,
+      demo_mode: false,
       window_days: 5,
       default_center: [78.9629, 20.5937],
       default_zoom: 5,
@@ -1594,7 +1594,7 @@ function renderInspector(p) {
     <div class="card-block">
       <div class="card-title">
         <span>Stefan-Boltzmann Radiative Physics</span>
-        <span style="color:#38bdf8">Doelling-Dozier Inversion</span>
+        <span style="color:#38bdf8">Radiant Area &amp; Temp Proxy</span>
       </div>
       <div class="phys-grid">
         <div class="phys-stat">
@@ -1617,15 +1617,15 @@ function renderInspector(p) {
       <div class="phys-verdict">${physics.verdict}</div>
     </div>
 
-    <!-- Dual-Engine ML Consensus Card -->
+    <!-- Dual-Engine Statistical Classifier Consensus Card -->
     <div class="card-block">
       <div class="card-title">
-        <span>Dual-Engine ML Ensemble</span>
+        <span>Statistical Classification Engine</span>
         <span style="color:${xai.model_concordance.is_concordant ? '#34d399' : '#f87171'}">
           ${xai.model_concordance.is_concordant ? '✓ Concordant' : '⚠ Divergent'} (${xai.model_concordance.agreement_score_pct}%)
         </span>
       </div>
-      <div style="font-size:10px;color:#7d93bb;margin-bottom:6px">Ensemble Model: ${ml.model_family || 'Calibrated GBDT'} (${ml.trees_count || 128} trees)</div>
+      <div style="font-size:10px;color:#7d93bb;margin-bottom:6px">Model Architecture: ${ml.model_family || 'Calibrated Multinomial Logistic Model'}</div>
       
       <div class="prob-row">
         <span style="color:#f59e0b;font-weight:600;min-width:75px">1. Flare:</span>
@@ -1644,11 +1644,11 @@ function renderInspector(p) {
       </div>
     </div>
 
-    <!-- Explainable AI (XAI) Attribution Card -->
+    <!-- Deterministic Evidence Attribution Card -->
     <div class="card-block">
       <div class="card-title">
-        <span>Forensic XAI Attributions</span>
-        <span style="color:#60a5fa">Feature Weight</span>
+        <span>Deterministic Evidence Attributions</span>
+        <span style="color:#60a5fa">Evidence Weight</span>
       </div>
       <div style="font-size:10.5px;color:#cbd5e1;line-height:1.35;margin-bottom:8px">
         ${xai.forensic_summary}

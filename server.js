@@ -28,8 +28,7 @@ const WILDFIRE_BT_MIN_K = parseFloat(process.env.WILDFIRE_BT_MIN_K || "330.0");
 const REFRESH_TTL_MINUTES = parseInt(process.env.REFRESH_TTL_MINUTES || "15", 10);
 const REFRESH_MIN_INTERVAL_S = parseInt(process.env.REFRESH_MIN_INTERVAL_S || "60", 10);
 
-const isExplicitDemo = ["1", "true", "yes"].includes((process.env.APP_DEMO_MODE || "").toLowerCase());
-const demoMode = isExplicitDemo || !MAP_KEY;
+const REAL_DATA_CACHE_PATH = path.join(__dirname, "data", "real_firms_india.json");
 
 const DEFAULT_CENTER_LON = 78.9629;
 const DEFAULT_CENTER_LAT = 20.5937;
@@ -219,19 +218,6 @@ const CLASS_LABELS = {
 };
 
 // ==============================================================================
-// Deterministic Random Generator (Mulberry32)
-// ==============================================================================
-function createRng(seed = 42) {
-  let a = seed >>> 0;
-  return function () {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// ==============================================================================
 // Dynamic UTM Projection (EPSG:326xx) & Metric Geodesy (FR-PRX-01..03)
 // ==============================================================================
 function projectWgs84ToUtm(lat, lon, centralLon) {
@@ -287,9 +273,34 @@ function projectWgs84ToUtm(lat, lon, centralLon) {
   return [x, y];
 }
 
-function distancePointToPlantUtm(ptX, ptY, plant, centralLon) {
+// Computes the local UTM zone central meridian for an industrial facility (WGS-84)
+function getPlantUtmCentralLon(plant) {
+  const pLon = (plant.minx + plant.maxx) / 2.0;
+  const utmZone = Math.floor((pLon + 180.0) / 6.0) + 1;
+  return (utmZone - 1) * 6 - 180 + 3;
+}
+
+// Computes metric Euclidean distance from point (lat, lon) to plant boundary in the plant's local UTM zone
+function distancePointToPlant(lat, lon, plant) {
+  // Coarse bounding box filter (~0.05° ≈ 5.5 km buffer) to bypass UTM projections for distant plants
+  const pBufferDeg = 0.05;
+  if (
+    lat < plant.miny - pBufferDeg ||
+    lat > plant.maxy + pBufferDeg ||
+    lon < plant.minx - pBufferDeg ||
+    lon > plant.maxx + pBufferDeg
+  ) {
+    const dLat = (lat - (plant.miny + plant.maxy) / 2.0) * 111320.0;
+    const dLon = (lon - (plant.minx + plant.maxx) / 2.0) * 111320.0 * Math.cos((lat * Math.PI) / 180.0);
+    return Math.hypot(dLat, dLon);
+  }
+
+  // Exact metric calculation using plant's local UTM zone to prevent subcontinental scale distortion
+  const localCentralLon = getPlantUtmCentralLon(plant);
+  const [ptX, ptY] = projectWgs84ToUtm(lat, lon, localCentralLon);
+
   if (plant.coordinates && plant.coordinates.length >= 3) {
-    const utmPoly = plant.coordinates.map((p) => projectWgs84ToUtm(p[1], p[0], centralLon));
+    const utmPoly = plant.coordinates.map((p) => projectWgs84ToUtm(p[1], p[0], localCentralLon));
     let inside = false;
     const nVert = utmPoly.length;
     let j = nVert - 1;
@@ -328,9 +339,9 @@ function distancePointToPlantUtm(ptX, ptY, plant, centralLon) {
     return minDist;
   }
 
-  // Fallback to bounding box projection
-  const [minUx, minUy] = projectWgs84ToUtm(plant.miny, plant.minx, centralLon);
-  const [maxUx, maxUy] = projectWgs84ToUtm(plant.maxy, plant.maxx, centralLon);
+  // Fallback to bounding box projection in local UTM zone
+  const [minUx, minUy] = projectWgs84ToUtm(plant.miny, plant.minx, localCentralLon);
+  const [maxUx, maxUy] = projectWgs84ToUtm(plant.maxy, plant.maxx, localCentralLon);
   const uxMin = Math.min(minUx, maxUx);
   const uxMax = Math.max(minUx, maxUx);
   const uyMin = Math.min(minUy, maxUy);
@@ -345,12 +356,20 @@ function distancePointToPlantUtm(ptX, ptY, plant, centralLon) {
   return Math.hypot(ptX - closestX, ptY - closestY);
 }
 
+// Backward compatibility alias
+function distancePointToPlantUtm(ptX, ptY, plant, centralLon) {
+  return distancePointToPlant(plant.miny, plant.minx, plant);
+}
+
 function getSnapStep(source) {
   return source && source.toUpperCase().startsWith("VIIRS") ? 0.0034 : 0.0100;
 }
 
 // ==============================================================================
-// Stefan-Boltzmann Radiative Physics & Subpixel Combustion Engine
+// Physics-Inspired Consistency Check: Stefan-Boltzmann Radiant Heat & Subpixel Model
+// Note: Subpixel flame temperature Tf is an empirical combustion range proxy
+// (gas flares: 1400K-1950K; wildfires: 750K-1050K; agricultural: 550K-780K)
+// used for physical consistency checking rather than Dozier bi-spectral inversion.
 // ==============================================================================
 const STEFAN_BOLTZMANN = 5.670374e-8; // W / (m^2 * K^4)
 const GAS_FLARE_EMISSIVITY = 0.92;
@@ -362,7 +381,7 @@ function computePhysicsModel(row, proximityM, plant) {
   const btK = row.bright_ti4 || 320.0;
   const isNight = row.daynight === "N";
 
-  // Subpixel flame combustion temperature Tf (Kelvin)
+  // Subpixel flame combustion temperature Tf (Kelvin) proxy
   // Gas flare stacks burn methane/associated gas at 1400K - 1950K;
   // Wildfires crown/surface burn at 750K - 1050K; Agricultural residue burns at 550K - 780K.
   let estimatedFlameTempK;
@@ -411,6 +430,8 @@ function computePhysicsModel(row, proximityM, plant) {
   const predictedClass = pInd >= pWild && pInd >= pAgri ? 1 : pWild >= pAgri ? 2 : 3;
 
   return {
+    method: "Stefan-Boltzmann Subpixel Radiative Power Consistency Check",
+    temperature_proxy_method: "Empirical combustion range proxy (not bi-spectral inversion)",
     estimated_flame_temp_k: Math.round(estimatedFlameTempK),
     subpixel_area_m2: Math.round(subpixelAreaM2 * 10) / 10,
     radiant_flux_density_kw_m2: Math.round(radiantFluxDensityKwM2 * 10) / 10,
@@ -433,7 +454,7 @@ function computePhysicsModel(row, proximityM, plant) {
 }
 
 // ==============================================================================
-// Machine Learning Model (Calibrated Gradient Boosted Ensemble)
+// Statistical Classifier: Calibrated 3-Class Multinomial Logit Model
 // ==============================================================================
 function computeMlModel(row, proximityM, persistenceScore, historyRecurrence, physicsOutput) {
   const frpMw = row.frp || 0.0;
@@ -483,13 +504,13 @@ function computeMlModel(row, proximityM, persistenceScore, historyRecurrence, ph
     },
     predicted_class: predictedClass,
     confidence: Math.round(Math.max(pInd, pWild, pNoise) * 1000) / 1000,
-    model_family: "Calibrated Gradient Boosted Ensemble (GBDT)",
-    trees_count: 128,
+    model_family: "Calibrated Multinomial Statistical Classifier (Logistic Model)",
+    decision_engine: "Multivariate Logit with Calibrated Physical Boundaries",
   };
 }
 
 // ==============================================================================
-// Explainable AI (XAI) Feature Attribution Waterfall & Concordance
+// Deterministic Evidence-Based Feature Attribution & Model Concordance
 // ==============================================================================
 function computeXai(row, proximityM, historyRecurrence, physics, ml, klass, plant) {
   const attributions = [];
@@ -588,10 +609,10 @@ function computeXai(row, proximityM, historyRecurrence, physics, ml, klass, plan
     },
     forensic_summary:
       klass === 1
-        ? `Dual-Engine XAI consensus identifies this anomaly as an active Industrial Gas Flare. Rule/Physics model verifies ultra-high combustion flame temperature (T_f ≈ ${physics.estimated_flame_temp_k} K, A_f ≈ ${physics.subpixel_area_m2} m²) strictly within ${plant ? plant.name : "Industrial Footprint"}. ML ensemble corroborates with ${Math.round(historyRecurrence * 100)}% 90-day historical surveillance recurrence.`
+        ? `Dual-Engine evidence consensus identifies this anomaly as an active Industrial Gas Flare. Stefan-Boltzmann physics-inspired check indicates high combustion flame temperature proxy (T_f ≈ ${physics.estimated_flame_temp_k} K, A_f ≈ ${physics.subpixel_area_m2} m²) within ${plant ? plant.name : "Industrial Footprint"}. Statistical classifier corroborates with ${Math.round(historyRecurrence * 100)}% 90-day historical surveillance recurrence.`
         : klass === 2
-        ? `Dual-Engine XAI consensus confirms this anomaly is an Uncontained Wildfire Front. Radiative physics calculates widespread surface burning (${row.frp} MW, A_f ≈ ${physics.subpixel_area_m2} m²) with zero historical recurrence, verifying an active spreading biomass fire.`
-        : `Dual-Engine XAI categorizes this as transient agricultural residue smoke. Sub-threshold flame temperature and low radiative power indicate absence of permanent combustion infrastructure.`,
+        ? `Dual-Engine evidence consensus confirms this anomaly is an Uncontained Wildfire Front. Radiative physics calculates widespread surface burning (${row.frp} MW, A_f ≈ ${physics.subpixel_area_m2} m²) with zero historical recurrence, verifying an active spreading biomass fire.`
+        : `Dual-Engine evidence categorizes this as transient agricultural residue smoke. Sub-threshold flame temperature and low radiative power indicate absence of permanent combustion infrastructure.`,
   };
 }
 
@@ -687,280 +708,126 @@ function computeThreatScore(row, proximityM, history, physics, klass) {
 }
 
 // ==============================================================================
-// Dual Temporal Engine: 90-Day Real Historical Archive + 5-Day NRT Telemetry
+// Real NASA FIRMS Satellite Telemetry Ingestion & Open Feeds (VIIRS / MODIS)
 // ==============================================================================
-function buildHistoricalAndNrtAnomalies(archiveDays = ARCHIVE_WINDOW_DAYS, nrtDays = NRT_WINDOW_DAYS) {
-  const rng = createRng(42);
-  const now = new Date();
-  const dates = [];
-
-  for (let i = 0; i < archiveDays; i++) {
-    const d = new Date(now.getTime() - (archiveDays - 1 - i) * 86400000);
-    dates.push(d.toISOString().slice(0, 10));
-  }
-
-  const nrtCutoffIndex = Math.max(0, archiveDays - nrtDays);
-  const rawRows = [];
-
-  // (1) Persistent Industrial Flare Clusters across Major Plants over 90 days
-  for (const plant of PLANTS) {
-    const cx = (plant.minx + plant.maxx) / 2.0;
-    const cy = (plant.miny + plant.maxy) / 2.0;
-    const isMajor = ["osm-ind-01", "osm-ind-03", "osm-ind-05"].includes(plant.id);
-    const stackOffsets = isMajor
-      ? [[-0.0034, -0.0034], [0.0, 0.0], [0.0034, 0.0034]]
-      : [[0.0, 0.0], [0.0034, 0.0]];
-
-    for (let sIdx = 0; sIdx < stackOffsets.length; sIdx++) {
-      const [offX, offY] = stackOffsets[sIdx];
-      const plon = cx + offX;
-      const plat = cy + offY;
-
-      for (let dIdx = 0; dIdx < dates.length; dIdx++) {
-        const dStr = dates[dIdx];
-        const isNrt = dIdx >= nrtCutoffIndex;
-
-        // In NRT window: stacks fire consistently to maintain the verified active baseline
-        // In archive window: stacks fire according to their verified recurrence rate
-        const willFire = isNrt ? true : rng() < (plant.recurrence_rate * 0.92);
-        if (!willFire) continue;
-
-        // Specific operational surge events:
-        // - NRT live surges: Jamnagar stack 0 on latest day, Mumbai High stack 1 on 2nd latest day
-        // - Historical operational surges across archive:
-        const isSurge =
-          (sIdx === 0 && dIdx === dates.length - 1 && plant.id === "osm-ind-01") ||
-          (sIdx === 1 && dIdx === dates.length - 2 && plant.id === "osm-ind-05") ||
-          (sIdx === 0 && dIdx === 42 && plant.id === "osm-ind-01") ||
-          (sIdx === 1 && dIdx === 55 && plant.id === "osm-ind-03") ||
-          (sIdx === 0 && dIdx === 65 && plant.id === "osm-ind-05") ||
-          (sIdx === 0 && dIdx === 28 && plant.id === "osm-ind-06");
-
-        const sat = isSurge ? "NOAA-20" : rng() > 0.4 ? "NPP" : "NOAA-21";
-        const inst = "VIIRS";
-        const src = SAT_TO_SOURCE[sat] || "VIIRS_SNPP_NRT";
-        const acqTime = rng() > 0.5 ? 200 + Math.floor(rng() * 40) : 1300 + Math.floor(rng() * 55);
-
-        const baseFrp = isSurge ? plant.baseline_mean_frp * (2.1 + rng() * 0.4) : plant.baseline_mean_frp;
-        const frpVal = Math.round((baseFrp + (rng() * 6.0 - 3.0)) * 10) / 10;
-        const btVal = Math.round((350.0 + (isSurge ? 28.0 : 12.0) * rng()) * 10) / 10;
-
-        rawRows.push({
-          latitude: plat + (rng() * 0.0003 - 0.00015),
-          longitude: plon + (rng() * 0.0003 - 0.00015),
-          bright_ti4: btVal,
-          frp: Math.max(5.0, frpVal),
-          acq_date: dStr,
-          acq_time: acqTime,
-          satellite: sat,
-          instrument: inst,
-          source: src,
-          confidence: isSurge ? "high" : rng() > 0.3 ? "high" : "nominal",
-          daynight: acqTime < 600 || acqTime > 1800 ? "N" : "D",
-          is_nrt: isNrt,
-          temporal_scope: isNrt ? "nrt" : "historical",
-        });
+function loadRealFirmsCache() {
+  try {
+    if (fs.existsSync(REAL_DATA_CACHE_PATH)) {
+      const raw = fs.readFileSync(REAL_DATA_CACHE_PATH, "utf8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
       }
     }
+  } catch (err) {
+    console.warn("[AGNI-AI] Error reading real firms cache:", err.message);
   }
+  return [];
+}
 
-  // (2) Wildfire Episodes
-  // Episode A: Active wildfire front in NRT window (last 5 days) across Madhya Pradesh
-  const sats = ["NPP", "NOAA-20", "NOAA-21", "Aqua", "Terra"];
-  for (let i = 0; i < nrtDays; i++) {
-    const dIdx = nrtCutoffIndex + i;
-    if (dIdx >= dates.length) break;
-    const dStr = dates[dIdx];
-    const fx = 78.250 + i * 0.085;
-    const fy = 20.520 + i * 0.045;
-    const offsets = [
-      [0.0, 0.0],
-      [0.008, 0.002],
-      [0.002, 0.007],
-      [0.010, 0.009],
-    ];
+function saveRealFirmsCache(rows) {
+  try {
+    fs.mkdirSync(path.dirname(REAL_DATA_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(REAL_DATA_CACHE_PATH, JSON.stringify(rows, null, 2));
+  } catch (err) {
+    console.warn("[AGNI-AI] Could not persist real firms cache:", err.message);
+  }
+}
 
-    for (const [dx, dy] of offsets) {
-      const lat = fy + dy + (rng() * 0.003 - 0.0015);
-      const lon = fx + dx + (rng() * 0.003 - 0.0015);
-      const sat = sats[(i + Math.floor(dx * 1000)) % sats.length];
-      const inst = sat === "Aqua" || sat === "Terra" ? "MODIS" : "VIIRS";
-      const src = SAT_TO_SOURCE[sat];
-      const acqTime = 1400 + Math.floor(rng() * 55);
+function parseFirmsCsv(csvText, sourceName, defaultSat, defaultInst) {
+  const lines = csvText.trim().split("\n");
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const latIdx = headers.indexOf("latitude");
+  const lonIdx = headers.indexOf("longitude");
+  const btIdx = headers.indexOf("bright_ti4") !== -1 ? headers.indexOf("bright_ti4") : headers.indexOf("brightness");
+  const bt5Idx = headers.indexOf("bright_ti5");
+  const frpIdx = headers.indexOf("frp");
+  const dateIdx = headers.indexOf("acq_date");
+  const timeIdx = headers.indexOf("acq_time");
+  const satIdx = headers.indexOf("satellite");
+  const instIdx = headers.indexOf("instrument");
+  const confIdx = headers.indexOf("confidence");
+  const dnIdx = headers.indexOf("daynight");
 
-      rawRows.push({
+  const [minLon, minLat, maxLon, maxLat] = AOI.split(",").map(Number);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    const parts = line.split(",");
+    const lat = parseFloat(parts[latIdx]);
+    const lon = parseFloat(parts[lonIdx]);
+    if (lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon) {
+      rows.push({
         latitude: lat,
         longitude: lon,
-        bright_ti4: Math.round((348.0 + rng() * 22.0) * 10) / 10,
-        frp: Math.round((16.0 + rng() * 38.0) * 10) / 10,
-        acq_date: dStr,
-        acq_time: acqTime,
-        satellite: sat,
-        instrument: inst,
-        source: src,
-        confidence: "high",
-        daynight: "D",
+        bright_ti4: btIdx !== -1 ? parseFloat(parts[btIdx]) || 0 : 0,
+        bright_ti5: bt5Idx !== -1 ? parseFloat(parts[bt5Idx]) || 0 : 0,
+        frp: frpIdx !== -1 ? parseFloat(parts[frpIdx]) || 0 : 0,
+        acq_date: parts[dateIdx],
+        acq_time: parseInt(parts[timeIdx] || "0", 10),
+        satellite: satIdx !== -1 && parts[satIdx] ? parts[satIdx] : defaultSat,
+        instrument: instIdx !== -1 && parts[instIdx] ? parts[instIdx] : defaultInst,
+        source: sourceName,
+        confidence: parts[confIdx] || "nominal",
+        daynight: parts[dnIdx] || "D",
         is_nrt: true,
         temporal_scope: "nrt",
       });
     }
   }
-
-  // Episode B: Historical dry season forest fire in Satpura/Betul (days 22 to 30)
-  for (let i = 22; i <= 30; i++) {
-    if (i >= dates.length) break;
-    const dStr = dates[i];
-    const step = i - 22;
-    const fx = 77.80 + step * 0.04;
-    const fy = 21.90 + step * 0.02;
-    const offsets = [[0.0, 0.0], [0.006, 0.004], [0.003, 0.008], [0.009, 0.007]];
-    for (const [dx, dy] of offsets) {
-      const sat = sats[(step + Math.floor(dx * 1000)) % sats.length];
-      const inst = sat === "Aqua" || sat === "Terra" ? "MODIS" : "VIIRS";
-      rawRows.push({
-        latitude: fy + dy + (rng() * 0.002 - 0.001),
-        longitude: fx + dx + (rng() * 0.002 - 0.001),
-        bright_ti4: Math.round((342.0 + rng() * 18.0) * 10) / 10,
-        frp: Math.round((14.0 + rng() * 30.0) * 10) / 10,
-        acq_date: dStr,
-        acq_time: 1330 + Math.floor(rng() * 45),
-        satellite: sat,
-        instrument: inst,
-        source: SAT_TO_SOURCE[sat],
-        confidence: "high",
-        daynight: "D",
-        is_nrt: false,
-        temporal_scope: "historical",
-      });
-    }
-  }
-
-  // Episode C: Historical forest fire in Simlipal Biosphere (days 50 to 57)
-  for (let i = 50; i <= 57; i++) {
-    if (i >= dates.length) break;
-    const dStr = dates[i];
-    const step = i - 50;
-    const fx = 86.20 + step * 0.03;
-    const fy = 21.80 + step * 0.025;
-    const offsets = [[0.0, 0.0], [0.005, 0.005], [0.002, 0.009]];
-    for (const [dx, dy] of offsets) {
-      const sat = sats[(step + Math.floor(dx * 1000)) % sats.length];
-      const inst = sat === "Aqua" || sat === "Terra" ? "MODIS" : "VIIRS";
-      rawRows.push({
-        latitude: fy + dy + (rng() * 0.002 - 0.001),
-        longitude: fx + dx + (rng() * 0.002 - 0.001),
-        bright_ti4: Math.round((340.0 + rng() * 16.0) * 10) / 10,
-        frp: Math.round((12.0 + rng() * 26.0) * 10) / 10,
-        acq_date: dStr,
-        acq_time: 1400 + Math.floor(rng() * 40),
-        satellite: sat,
-        instrument: inst,
-        source: SAT_TO_SOURCE[sat],
-        confidence: "high",
-        daynight: "D",
-        is_nrt: false,
-        temporal_scope: "historical",
-      });
-    }
-  }
-
-  // (3) Agricultural / Stubble Burning
-  // NRT agricultural points (14 points in last 5 days)
-  const nrtDates = dates.slice(nrtCutoffIndex);
-  for (let j = 0; j < 14; j++) {
-    const lon = 75.10 + rng() * 1.50;
-    const lat = 29.80 + rng() * 1.40;
-    const dStr = nrtDates[Math.floor(rng() * nrtDates.length)];
-    const satChoices = ["NPP", "Terra", "Aqua"];
-    const sat = satChoices[Math.floor(rng() * satChoices.length)];
-    const inst = sat === "NPP" ? "VIIRS" : "MODIS";
-    const src = SAT_TO_SOURCE[sat];
-    const acqTime = 1500 + Math.floor(rng() * 55);
-
-    rawRows.push({
-      latitude: lat,
-      longitude: lon,
-      bright_ti4: Math.round((310.0 + rng() * 14.0) * 10) / 10,
-      frp: Math.round((0.9 + rng() * 3.2) * 100) / 100,
-      acq_date: dStr,
-      acq_time: acqTime,
-      satellite: sat,
-      instrument: inst,
-      source: src,
-      confidence: String(Math.floor(20 + rng() * 30)),
-      daynight: "D",
-      is_nrt: true,
-      temporal_scope: "nrt",
-    });
-  }
-
-  // Historical agricultural burning waves
-  // Wave 1: Punjab / Haryana harvesting (days 25 to 38)
-  for (let i = 25; i <= 38; i++) {
-    if (i >= dates.length) break;
-    const dStr = dates[i];
-    const count = 3 + Math.floor(rng() * 3);
-    for (let k = 0; k < count; k++) {
-      const lon = 75.00 + rng() * 1.80;
-      const lat = 29.60 + rng() * 1.60;
-      const sat = sats[Math.floor(rng() * sats.length)];
-      const inst = sat === "NPP" ? "VIIRS" : "MODIS";
-      rawRows.push({
-        latitude: lat,
-        longitude: lon,
-        bright_ti4: Math.round((312.0 + rng() * 16.0) * 10) / 10,
-        frp: Math.round((1.2 + rng() * 3.8) * 100) / 100,
-        acq_date: dStr,
-        acq_time: 1430 + Math.floor(rng() * 60),
-        satellite: sat,
-        instrument: inst,
-        source: SAT_TO_SOURCE[sat],
-        confidence: String(Math.floor(25 + rng() * 35)),
-        daynight: "D",
-        is_nrt: false,
-        temporal_scope: "historical",
-      });
-    }
-  }
-
-  // Wave 2: Indo-Gangetic / UP clearing (days 60 to 70)
-  for (let i = 60; i <= 70; i++) {
-    if (i >= dates.length) break;
-    const dStr = dates[i];
-    const count = 2 + Math.floor(rng() * 2);
-    for (let k = 0; k < count; k++) {
-      const lon = 79.50 + rng() * 3.20;
-      const lat = 26.50 + rng() * 1.80;
-      const sat = sats[Math.floor(rng() * sats.length)];
-      const inst = sat === "NPP" ? "VIIRS" : "MODIS";
-      rawRows.push({
-        latitude: lat,
-        longitude: lon,
-        bright_ti4: Math.round((309.0 + rng() * 12.0) * 10) / 10,
-        frp: Math.round((0.8 + rng() * 2.8) * 100) / 100,
-        acq_date: dStr,
-        acq_time: 1400 + Math.floor(rng() * 50),
-        satellite: sat,
-        instrument: inst,
-        source: SAT_TO_SOURCE[sat],
-        confidence: String(Math.floor(20 + rng() * 25)),
-        daynight: "D",
-        is_nrt: false,
-        temporal_scope: "historical",
-      });
-    }
-  }
-
-  return rawRows;
+  return rows;
 }
 
-// Backward compatibility alias
-function buildDemoAnomalies(windowDays = PERSISTENCE_WINDOW_DAYS) {
-  if (windowDays <= NRT_WINDOW_DAYS) {
-    const all = buildHistoricalAndNrtAnomalies(ARCHIVE_WINDOW_DAYS, windowDays);
-    return all.filter((r) => r.is_nrt);
+async function fetchLiveFirmsData() {
+  const allRows = [];
+
+  // 1. If MAP_KEY provided, query NASA FIRMS REST API
+  if (MAP_KEY) {
+    const sources = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT", "VIIRS_NOAA21_NRT", "MODIS_NRT"];
+    for (const src of sources) {
+      try {
+        const url = `${FIRMS_BASE_URL}/api/area/csv/${MAP_KEY}/${src}/${AOI}/${NRT_WINDOW_DAYS}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (res.ok) {
+          const csv = await res.text();
+          const parsed = parseFirmsCsv(csv, src, "VIIRS", "VIIRS");
+          allRows.push(...parsed);
+        }
+      } catch (err) {
+        console.warn(`[AGNI-AI] FIRMS API fetch error for ${src}:`, err.message);
+      }
+    }
   }
-  return buildHistoricalAndNrtAnomalies(windowDays, NRT_WINDOW_DAYS);
+
+  // 2. Direct Open NRT CSV Streams from NASA FIRMS
+  if (allRows.length === 0) {
+    const publicFeeds = [
+      { url: `${FIRMS_BASE_URL}/data/active_fire/suomi-npp-viirs-c2/csv/SUOMI_VIIRS_C2_Global_7d.csv`, name: "VIIRS_SNPP_NRT", sat: "Suomi-NPP", inst: "VIIRS" },
+      { url: `${FIRMS_BASE_URL}/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_7d.csv`, name: "VIIRS_NOAA20_NRT", sat: "NOAA-20", inst: "VIIRS" },
+      { url: `${FIRMS_BASE_URL}/data/active_fire/modis-c6.1/csv/MODIS_C6_1_Global_7d.csv`, name: "MODIS_NRT", sat: "Terra/Aqua", inst: "MODIS" }
+    ];
+    for (const feed of publicFeeds) {
+      try {
+        const res = await fetch(feed.url, { signal: AbortSignal.timeout(30000) });
+        if (res.ok) {
+          const csv = await res.text();
+          const parsed = parseFirmsCsv(csv, feed.name, feed.sat, feed.inst);
+          allRows.push(...parsed);
+        }
+      } catch (err) {
+        console.warn(`[AGNI-AI] Public FIRMS feed error for ${feed.name}:`, err.message);
+      }
+    }
+  }
+
+  if (allRows.length > 0) {
+    saveRealFirmsCache(allRows);
+    return allRows;
+  }
+
+  return loadRealFirmsCache();
 }
 
 // ==============================================================================
@@ -1093,7 +960,7 @@ function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS, industri
     let minDistance = Infinity;
     let closestPlant = null;
     for (const plant of industrialSites) {
-      const dist = distancePointToPlantUtm(ux, uy, plant, centralLon);
+      const dist = distancePointToPlant(row.latitude, row.longitude, plant);
       if (dist < minDistance) {
         minDistance = dist;
         closestPlant = plant;
@@ -1438,11 +1305,10 @@ function computeFacilityDossiers(anomalies, plants = PLANTS) {
 }
 
 // ==============================================================================
-// State & Pipeline In-Memory Cache
+// State & Pipeline In-Memory Cache (Real NASA Telemetry)
 // ==============================================================================
-// Pre-initialize synchronously with dual-window (90-day archive + 5-day NRT)
-const initialDemoRows = buildHistoricalAndNrtAnomalies(ARCHIVE_WINDOW_DAYS, NRT_WINDOW_DAYS);
-const initialClassified = classifyDataset(initialDemoRows, ARCHIVE_WINDOW_DAYS, PLANTS);
+const initialRealRows = loadRealFirmsCache();
+const initialClassified = classifyDataset(initialRealRows, PERSISTENCE_WINDOW_DAYS, PLANTS);
 const initialNrtStats = computeNrtStats(initialClassified, NRT_WINDOW_DAYS);
 const initialHistStats = computeHistoricalStats(initialClassified);
 const initialTimeSeries = computeTimeSeries(initialClassified);
@@ -1454,12 +1320,12 @@ const state = {
   industrial_sites_count: PLANTS.length,
   industrial_count: PLANTS.length,
   updated_at_utc: new Date().toISOString(),
-  window_days: ARCHIVE_WINDOW_DAYS,
-  observation_window_days: ARCHIVE_WINDOW_DAYS,
+  window_days: PERSISTENCE_WINDOW_DAYS,
+  observation_window_days: PERSISTENCE_WINDOW_DAYS,
   nrt_window_days: NRT_WINDOW_DAYS,
   sources: Array.from(new Set(initialClassified.map((c) => c.source))).sort(),
-  demo_mode: demoMode,
-  status: "ready",
+  demo_mode: false,
+  status: initialClassified.length ? "ready" : "initializing",
   last_error: null,
   nrt_stats: initialNrtStats,
   historical_stats: initialHistStats,
@@ -1472,86 +1338,36 @@ let lastRefreshAttempt = 0;
 async function refreshPipeline() {
   lastRefreshAttempt = Date.now();
   try {
-    let rows;
+    const rows = await fetchLiveFirmsData();
     let industrialSites = PLANTS;
 
-    if (!demoMode && MAP_KEY) {
+    if (rows && rows.length > 0) {
       try {
-        // Attempt live FIRMS fetch across all 4 NRT sources
-        const firmsSources = [
-          "VIIRS_SNPP_NRT",
-          "VIIRS_NOAA20_NRT",
-          "VIIRS_NOAA21_NRT",
-          "MODIS_NRT",
-        ];
-        const fetchedRows = [];
-        for (const src of firmsSources) {
-          const url = `${FIRMS_BASE_URL}/api/area/csv/${MAP_KEY}/${src}/${AOI}/${NRT_WINDOW_DAYS}`;
-          const res = await fetch(url);
-          if (res.ok) {
-            const csv = await res.text();
-            const lines = csv.trim().split("\n");
-            if (lines.length > 1) {
-              const headers = lines[0].split(",").map((h) => h.trim());
-              for (let i = 1; i < lines.length; i++) {
-                const vals = lines[i].split(",").map((v) => v.trim());
-                const row = {};
-                headers.forEach((h, idx) => (row[h] = vals[idx]));
-                if (row.latitude && row.longitude) {
-                  fetchedRows.push({
-                    latitude: parseFloat(row.latitude),
-                    longitude: parseFloat(row.longitude),
-                    bright_ti4: parseFloat(row.bright_ti4 || row.brightness || 0),
-                    frp: parseFloat(row.frp || 0),
-                    acq_date: row.acq_date,
-                    acq_time: parseInt(row.acq_time || "0", 10),
-                    satellite: row.satellite || "VIIRS",
-                    instrument: row.instrument || "VIIRS",
-                    source: src,
-                    confidence: row.confidence || "nominal",
-                    daynight: row.daynight || "D",
-                    is_nrt: true,
-                    temporal_scope: "nrt",
-                  });
-                }
-              }
-            }
-          }
-        }
-        if (fetchedRows.length > 0) {
-          // Combine live NRT data with historical baseline archive
-          const histRows = buildHistoricalAndNrtAnomalies(ARCHIVE_WINDOW_DAYS, NRT_WINDOW_DAYS).filter((r) => !r.is_nrt);
-          rows = [...histRows, ...fetchedRows];
-          industrialSites = await fetchOverpassIndustrial(rows, OSM_SEARCH_RADIUS_M);
-        } else {
-          rows = buildHistoricalAndNrtAnomalies(ARCHIVE_WINDOW_DAYS, NRT_WINDOW_DAYS);
-        }
-      } catch (err) {
-        console.warn("Live fetch fallback to demo:", err.message);
-        rows = buildHistoricalAndNrtAnomalies(ARCHIVE_WINDOW_DAYS, NRT_WINDOW_DAYS);
+        industrialSites = await fetchOverpassIndustrial(rows, OSM_SEARCH_RADIUS_M);
+      } catch (e) {
+        console.warn("[AGNI-AI] Overpass refinement note:", e.message);
       }
-    } else {
-      rows = buildHistoricalAndNrtAnomalies(ARCHIVE_WINDOW_DAYS, NRT_WINDOW_DAYS);
     }
 
-    const classified = classifyDataset(rows, ARCHIVE_WINDOW_DAYS, industrialSites);
+    const classified = classifyDataset(rows, PERSISTENCE_WINDOW_DAYS, industrialSites);
     state.anomalies = classified;
     state.industrial_sites = industrialSites;
     state.industrial_sites_count = industrialSites.length;
     state.industrial_count = industrialSites.length;
     state.updated_at_utc = new Date().toISOString();
     state.sources = Array.from(new Set(classified.map((c) => c.source))).sort();
-    state.window_days = ARCHIVE_WINDOW_DAYS;
-    state.observation_window_days = ARCHIVE_WINDOW_DAYS;
+    state.window_days = PERSISTENCE_WINDOW_DAYS;
+    state.observation_window_days = PERSISTENCE_WINDOW_DAYS;
     state.nrt_stats = computeNrtStats(classified, NRT_WINDOW_DAYS);
     state.historical_stats = computeHistoricalStats(classified);
     state.time_series = computeTimeSeries(classified);
     state.facilities = computeFacilityDossiers(classified, industrialSites);
+    state.demo_mode = false;
     state.status = "ready";
     state.last_error = null;
     return { ok: true, count: classified.length };
   } catch (err) {
-    console.error("Refresh pipeline failed:", err);
+    console.error("[AGNI-AI] Refresh pipeline error:", err);
     state.status = state.anomalies.length ? "stale" : "initializing";
     state.last_error = err.message;
     return { ok: false, message: err.message };
@@ -1839,9 +1655,7 @@ refreshPipeline().then(() => {
 const isDirectRun = process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
 if (isDirectRun && !process.env.VERCEL) {
   const timer = setInterval(() => {
-    if (!demoMode && MAP_KEY) {
-      refreshPipeline();
-    }
+    refreshPipeline();
   }, REFRESH_TTL_MINUTES * 60 * 1000);
   timer.unref();
 

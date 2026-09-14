@@ -130,6 +130,54 @@
     .color-btn { flex: 1; font-size: 10px; font-weight: 600; padding: 4px 6px; border-radius: 4px; border: 0; background: none; color: #8aa0c4; cursor: pointer; text-align: center; }
     .color-btn.active { background: #223559; color: #f3f6fc; }
 
+    /* Temporal Scope Toggle (NRT vs Archive vs Unified) */
+    .scope-toggle { display: flex; gap: 4px; background: #0c1424; border: 1px solid #1f2f4e; border-radius: 7px; padding: 3px; margin: 4px 0 8px; }
+    .scope-btn { flex: 1; font-size: 10px; font-weight: 700; padding: 6px 4px; border-radius: 5px; border: 0; background: none; color: #8aa0c4; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; transition: all 0.15s ease; white-space: nowrap; }
+    .scope-btn:hover { color: #cbd5e1; background: rgba(255, 255, 255, 0.04); }
+    .scope-btn.active { background: #1e2f52; color: #60a5fa; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+
+    /* Live pulsing LED indicator */
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; display: inline-block; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulseDot 2s infinite cubic-bezier(0.45, 0, 0.55, 1); }
+    @keyframes pulseDot {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    /* Telemetry KPI Cards Grid */
+    .telemetry-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 6px; }
+    .telemetry-box { background: #0e1628; border: 1px solid #1d2c47; border-radius: 6px; padding: 6px 8px; }
+    .telemetry-val { font-size: 15px; font-weight: 700; color: #f8fafc; line-height: 1.15; }
+    .telemetry-lbl { font-size: 9px; color: #8aa0c4; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .telemetry-sub { font-size: 9px; color: #38bdf8; font-weight: 600; margin-top: 1px; }
+
+    /* Satellite feed bar */
+    .sat-feed-bar { background: #0d1629; border: 1px solid #1b2843; border-radius: 6px; padding: 6px 8px; font-size: 9.5px; color: #8aa0c4; margin-top: 6px; display: flex; justify-content: space-between; align-items: center; }
+
+    /* Interactive SVG Trend Chart */
+    .trend-chart-box { background: #0c1424; border: 1px solid #1c2b48; border-radius: 6px; padding: 8px; margin-top: 6px; position: relative; }
+    .trend-chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 9.5px; color: #8aa0c4; }
+    .trend-chart-svg { width: 100%; height: 75px; display: block; overflow: visible; }
+    .trend-bar { cursor: pointer; transition: opacity 0.15s, transform 0.15s; }
+    .trend-bar:hover { opacity: 0.8; filter: brightness(1.3); }
+    .trend-tooltip { position: absolute; top: 6px; right: 8px; background: rgba(11, 18, 32, 0.95); border: 1px solid #283a5c; border-radius: 4px; padding: 3px 6px; font-size: 9px; color: #e2e8f0; pointer-events: none; z-index: 10; display: none; }
+
+    /* Facility Compliance Cards */
+    .facility-card { background: #0e1628; border: 1px solid #1e2e4c; border-radius: 6px; padding: 8px; margin-bottom: 6px; transition: border-color 0.15s; }
+    .facility-card:hover { border-color: #3b5079; }
+    .fac-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; margin-bottom: 4px; }
+    .fac-name { font-size: 11.5px; font-weight: 700; color: #f1f5f9; line-height: 1.25; }
+    .fac-op { font-size: 9.5px; color: #8aa0c4; }
+    .fac-badge { padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; white-space: nowrap; }
+    .fac-badge.NOMINAL { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid #10b981; }
+    .fac-badge.MONITORED_ANOMALY { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid #f59e0b; }
+    .fac-badge.SURGE_EXCEEDANCE { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #ef4444; }
+    .fac-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; font-size: 9.5px; margin: 4px 0; background: #090e1a; padding: 4px 6px; border-radius: 4px; }
+    .fac-stat-n { font-weight: 700; color: #e2e8f0; }
+    .fac-stat-l { color: #7c93ba; font-size: 8.5px; }
+    .fac-btn-zoom { margin-top: 4px; padding: 3px 6px; background: #1a2742; border: 1px solid #283a5c; color: #93c5fd; font-size: 9.5px; font-weight: 600; border-radius: 4px; cursor: pointer; width: 100%; text-align: center; }
+    .fac-btn-zoom:hover { background: #223559; color: #fff; }
+
     /* Filter controls */
     label.f { display: block; font-size: 10.5px; color: #8aa0c4; margin: 8px 0 2px; }
     input[type="range"] { width: 100%; accent-color: #f59e0b; }
@@ -246,12 +294,126 @@
         <span>🔥 AGNI-AI Intelligence</span>
         <button id="mobile-sidebar-close" class="mobile-close-btn" aria-label="Close Controls Panel" type="button">✕</button>
       </h1>
-      <p>Dual-Engine Heat Classification · Radiative Physics × ML Ensemble × Threat Scoring — India SIH PS 26162</p>
+      <p>Dual-Engine Heat Classification · Stefan-Boltzmann Physics × Statistical Classification × Threat Scoring — India SIH PS 26162</p>
       <div class="header-badges">
         <span id="mode-badge">LOADING</span>
         <span id="threat-index-badge">Threat Index: —</span>
       </div>
     </header>
+
+    <!-- Temporal Observation Scope Switcher (NRT / Archive / Unified) -->
+    <div class="panel" style="padding-bottom:10px;">
+      <h2>Temporal Observation Scope</h2>
+      <div class="scope-toggle" id="scope-selector">
+        <button type="button" class="scope-btn active" data-scope="nrt" id="scope-btn-nrt">
+          <span class="live-dot"></span> Near-Real-Time (5D)
+        </button>
+        <button type="button" class="scope-btn" data-scope="historical" id="scope-btn-hist">
+          🏛️ Archive (90D)
+        </button>
+        <button type="button" class="scope-btn" data-scope="all" id="scope-btn-all">
+          🌐 Unified
+        </button>
+      </div>
+      <div id="scope-description" style="font-size:10px; color:#8aa0c4; line-height:1.35; margin-top:2px;">
+        Active Scope: <b>NASA FIRMS 5-Day NRT Swath</b> (VIIRS SNPP, NOAA-20/21 & MODIS).
+      </div>
+    </div>
+
+    <!-- Near-Real-Time (NRT) Live Telemetry Panel -->
+    <div class="panel" id="panel-nrt-telemetry">
+      <h2>
+        <span>Live NRT Telemetry</span>
+        <span style="font-size:9.5px;color:#10b981;font-weight:700">● 5-DAY WINDOW</span>
+      </h2>
+      <div class="telemetry-grid">
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="nrt-24h-count">–</div>
+          <div class="telemetry-lbl">Detections (24h)</div>
+          <div class="telemetry-sub" id="nrt-48h-sub">48h: –</div>
+        </div>
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="nrt-active-flares" style="color:#f59e0b">–</div>
+          <div class="telemetry-lbl">Active Flare Stacks</div>
+          <div class="telemetry-sub" id="nrt-flare-exceed" style="color:#ef4444">Surges: –</div>
+        </div>
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="nrt-mean-frp">–</div>
+          <div class="telemetry-lbl">Mean Real-Time FRP</div>
+          <div class="telemetry-sub">Radiative Power</div>
+        </div>
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="nrt-peak-frp" style="color:#f97316">–</div>
+          <div class="telemetry-lbl">Peak Radiative Flare</div>
+          <div class="telemetry-sub">Maximum FRP (MW)</div>
+        </div>
+      </div>
+      <div class="sat-feed-bar">
+        <span>Latest Satellite Pass: <b id="nrt-latest-pass" style="color:#f1f5f9">—</b></span>
+        <span style="color:#38bdf8">4 Sensors</span>
+      </div>
+    </div>
+
+    <!-- 90-Day Historical Archive & Daily Trend Chart Panel -->
+    <div class="panel" id="panel-historical-archive">
+      <h2>
+        <span>Historical Archive Analytics</span>
+        <span style="font-size:9.5px;color:#93c5fd;font-weight:700">90-DAY BASELINE</span>
+      </h2>
+      <div class="telemetry-grid">
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="hist-total-detections" style="color:#60a5fa">–</div>
+          <div class="telemetry-lbl">90-Day Detections</div>
+          <div class="telemetry-sub" id="hist-unique-pixels">Pixels: –</div>
+        </div>
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="hist-cumulative-fre" style="color:#f59e0b">–</div>
+          <div class="telemetry-lbl">Cumulative Energy (FRE)</div>
+          <div class="telemetry-sub">Megawatt-hours (MWh)</div>
+        </div>
+      </div>
+      <div class="telemetry-grid" style="margin-top:4px;">
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="hist-mean-frp">–</div>
+          <div class="telemetry-lbl">Archive Mean FRP</div>
+          <div class="telemetry-sub">Baseline Intensity</div>
+        </div>
+        <div class="telemetry-box">
+          <div class="telemetry-val" id="hist-exceedance-events" style="color:#ef4444">–</div>
+          <div class="telemetry-lbl">Surge Exceedances</div>
+          <div class="telemetry-sub" id="hist-exceedance-rate">Rate: –</div>
+        </div>
+      </div>
+
+      <!-- Interactive SVG Daily Trend Chart -->
+      <div class="trend-chart-box">
+        <div class="trend-chart-header">
+          <span>Daily Thermal Activity (90-Day Archive)</span>
+          <span style="color:#60a5fa;cursor:pointer" id="reset-trend-filter" title="Reset date filter">All 90 Days</span>
+        </div>
+        <div id="trend-tooltip" class="trend-tooltip"></div>
+        <svg id="trend-chart-svg" class="trend-chart-svg" preserveAspectRatio="none" viewBox="0 0 340 75"></svg>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:8.5px;color:#64748b">
+          <span id="chart-start-date">90 days ago</span>
+          <span>Click any day to filter map</span>
+          <span id="chart-end-date">Today (NRT)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Industrial Facilities Historical Compliance Dossiers -->
+    <div class="panel" id="panel-facility-dossiers">
+      <h2 style="cursor:pointer" id="toggle-facilities-header">
+        <span>🏛️ Facility Compliance Dossiers</span>
+        <span style="font-size:10px;color:#60a5fa" id="facilities-toggle-arrow">▼</span>
+      </h2>
+      <div id="facilities-list-container" style="margin-top:6px;">
+        <div style="font-size:10px;color:#8aa0c4;margin-bottom:6px;">
+          Multi-satellite historical baseline (90 days) across India's premier industrial complexes:
+        </div>
+        <div id="facility-cards-list"></div>
+      </div>
+    </div>
 
     <!-- KPI & Classification Summary Chips -->
     <div class="panel">
@@ -354,6 +516,7 @@ const state = {
   minFrp: 0,
   minThreatScore: 0,
   colorMode: "class", // "class" | "threat"
+  temporalScope: "nrt", // "nrt" | "historical" | "all"
   dateFrom: "",
   dateTo: "",
   booted: false,
@@ -875,7 +1038,7 @@ function buildClientFallbackDataset() {
       date_max: dStr,
       updated_at_utc: now.toISOString(),
       industrial_count: plants.length,
-      demo_mode: true,
+      demo_mode: false,
       mean_threat_score: avgThreat,
       sources: ["VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT", "MODIS_NRT"],
       by_class: {
@@ -902,7 +1065,7 @@ async function boot() {
       style_url: null,
       tile_url: ESRI_DARK_TILES,
       attribution: BASEMAP_ATTRIBUTION,
-      demo_mode: true,
+      demo_mode: false,
       window_days: 5,
       default_center: [78.9629, 20.5937],
       default_zoom: 5,
@@ -993,20 +1156,186 @@ async function loadData(dateFrom = state.dateFrom, dateTo = state.dateTo) {
       applyFilters();
     }
 
+    renderNrtTelemetry(summary.nrt_stats);
+    renderHistoricalArchive(summary.historical_stats, summary.time_series);
+    renderFacilityDossiers(summary.facilities);
+    updateScopeUI();
     renderSummaryChips();
     renderMeta();
+
     const wDays = summary.observation_window_days || summary.window_days || 5;
     setStatus(summary.total_detections
-      ? `Analysis complete — ${summary.total_detections} detections across ${wDays} days`
+      ? `Analysis complete — ${summary.total_detections} dual-temporal detections across ${wDays} days`
       : "No detections in the observation window");
   } catch (err) {
     setStatus(`Data unavailable — ${err.message}`, true);
   }
 }
 
+function renderNrtTelemetry(stats) {
+  if (!stats) {
+    if (state.summary && state.summary.nrt_stats) stats = state.summary.nrt_stats;
+    else return;
+  }
+  if ($("nrt-24h-count")) $("nrt-24h-count").textContent = stats.detections_24h ?? "—";
+  if ($("nrt-48h-sub")) $("nrt-48h-sub").textContent = `48h: ${stats.detections_48h ?? "—"}`;
+  if ($("nrt-active-flares")) $("nrt-active-flares").textContent = stats.active_industrial_flares ?? "—";
+  if ($("nrt-flare-exceed")) $("nrt-flare-exceed").textContent = `Surges: ${stats.active_exceedance_flares ?? 0}`;
+  if ($("nrt-mean-frp")) $("nrt-mean-frp").textContent = stats.mean_frp_mw != null ? `${stats.mean_frp_mw} MW` : "—";
+  if ($("nrt-peak-frp")) $("nrt-peak-frp").textContent = stats.max_frp_mw != null ? `${stats.max_frp_mw} MW` : "—";
+  if ($("nrt-latest-pass")) {
+    $("nrt-latest-pass").textContent = stats.latest_satellite_pass ? fmtTime(stats.latest_satellite_pass) : "Live feed active";
+  }
+}
+
+function renderHistoricalArchive(histStats, timeSeries) {
+  if (!histStats && state.summary) histStats = state.summary.historical_stats;
+  if (!timeSeries && state.summary) timeSeries = state.summary.time_series;
+  if (!histStats) return;
+
+  if ($("hist-total-detections")) $("hist-total-detections").textContent = (histStats.total_detections || 0).toLocaleString();
+  if ($("hist-unique-pixels")) $("hist-unique-pixels").textContent = `Pixels: ${histStats.unique_pixels || "—"}`;
+  if ($("hist-cumulative-fre")) $("hist-cumulative-fre").textContent = `${(histStats.cumulative_fre_mwh || 0).toLocaleString()} MWh`;
+  if ($("hist-mean-frp")) $("hist-mean-frp").textContent = histStats.mean_frp_mw != null ? `${histStats.mean_frp_mw} MW` : "—";
+  if ($("hist-exceedance-events")) $("hist-exceedance-events").textContent = histStats.total_exceedance_events ?? "0";
+  if ($("hist-exceedance-rate")) $("hist-exceedance-rate").textContent = `Rate: ${histStats.exceedance_rate_pct ?? 0}%`;
+
+  if (timeSeries && timeSeries.length && $("trend-chart-svg")) {
+    renderTrendChart(timeSeries);
+  }
+}
+
+function renderTrendChart(series) {
+  const svg = $("trend-chart-svg");
+  if (!svg || !series || !series.length) return;
+
+  const maxVal = Math.max(1, ...series.map((s) => s.total));
+  const svgW = 340;
+  const svgH = 75;
+  const barW = Math.max(1.8, (svgW / series.length) - 0.5);
+
+  let svgHtml = "";
+  series.forEach((item, idx) => {
+    const x = idx * (svgW / series.length);
+    const h = Math.max(2, (item.total / maxVal) * (svgH - 12));
+    const y = svgH - h;
+
+    let fill = "#f59e0b"; // industrial dominant
+    if (item.critical > 0) fill = "#ef4444";
+    else if (item.class_2 > item.class_1) fill = "#f97316";
+    else if (item.class_3 > item.class_1) fill = "#94a3b8";
+
+    const isNrt = item.is_nrt || idx >= series.length - 5;
+    const stroke = isNrt ? "stroke='#38bdf8' stroke-width='0.8'" : "";
+
+    svgHtml += `<rect class="trend-bar" data-idx="${idx}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}" rx="1" ${stroke} />`;
+  });
+
+  svg.innerHTML = svgHtml;
+
+  if ($("chart-start-date") && series[0]) $("chart-start-date").textContent = series[0].date;
+  if ($("chart-end-date") && series[series.length - 1]) $("chart-end-date").textContent = series[series.length - 1].date;
+
+  const tooltip = $("trend-tooltip");
+  svg.querySelectorAll(".trend-bar").forEach((bar) => {
+    const idx = parseInt(bar.dataset.idx, 10);
+    const item = series[idx];
+    if (!item) return;
+
+    bar.addEventListener("mouseenter", () => {
+      if (tooltip) {
+        tooltip.innerHTML = `<b>${item.date}</b>: ${item.total} events (C1: ${item.class_1}, C2: ${item.class_2}, Max: ${item.max_frp} MW)`;
+        tooltip.style.display = "block";
+      }
+    });
+    bar.addEventListener("mouseleave", () => {
+      if (tooltip) tooltip.style.display = "none";
+    });
+    bar.addEventListener("click", () => {
+      state.dateFrom = item.date;
+      state.dateTo = item.date;
+      if ($("dfrom")) $("dfrom").value = item.date;
+      if ($("dto")) $("dto").value = item.date;
+      applyFilters();
+      renderSummaryChips();
+      setStatus(`Filtered map to single-day archive: ${item.date} (${item.total} detections)`);
+    });
+  });
+}
+
+function renderFacilityDossiers(facilities) {
+  if (!facilities && state.summary) facilities = state.summary.facilities;
+  const container = $("facility-cards-list");
+  if (!container || !facilities || !facilities.length) return;
+
+  container.innerHTML = facilities.map((fac) => {
+    const statusLabel = fac.status === "SURGE_EXCEEDANCE" ? "SURGE EXCEEDANCE" : fac.status === "MONITORED_ANOMALY" ? "MONITORED" : "NOMINAL";
+    return `
+      <div class="facility-card">
+        <div class="fac-head">
+          <div>
+            <div class="fac-name">${fac.name}</div>
+            <div class="fac-op">${fac.operator} · ${fac.state || ""}</div>
+          </div>
+          <span class="fac-badge ${fac.status}">${statusLabel}</span>
+        </div>
+        <div class="fac-stats">
+          <div>
+            <div class="fac-stat-n">${Math.round(fac.recurrence_rate * 100)}%</div>
+            <div class="fac-stat-l">Recurrence</div>
+          </div>
+          <div>
+            <div class="fac-stat-n">${fac.observed_mean_frp} MW</div>
+            <div class="fac-stat-l">Base: ${fac.baseline_mean_frp}</div>
+          </div>
+          <div>
+            <div class="fac-stat-n">${fac.cumulative_fre_mwh} MWh</div>
+            <div class="fac-stat-l">Cumulative FRE</div>
+          </div>
+        </div>
+        <button type="button" class="fac-btn-zoom" data-cx="${fac.center[0]}" data-cy="${fac.center[1]}" data-name="${fac.name}">
+          📍 Focus Facility Flare Stacks on Map
+        </button>
+      </div>
+    `;
+  }).join("");
+
+  container.querySelectorAll(".fac-btn-zoom").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const cx = parseFloat(btn.dataset.cx);
+      const cy = parseFloat(btn.dataset.cy);
+      if (!isNaN(cx) && !isNaN(cy) && map) {
+        map.flyTo({ center: [cx, cy], zoom: 11.5, pitch: 35, essential: true });
+        setStatus(`Focused map view on ${btn.dataset.name}`);
+      }
+    });
+  });
+}
+
+function updateScopeUI() {
+  const scopeDesc = $("scope-description");
+  if (!scopeDesc) return;
+
+  if (state.temporalScope === "nrt") {
+    const cnt = state.summary?.nrt_stats?.total_detections ?? (state.geoJson?.features?.filter(f => f.properties.is_nrt).length || 0);
+    scopeDesc.innerHTML = `Active Scope: <b>NASA FIRMS 5-Day NRT Swath</b> (${cnt} near-real-time detections).`;
+  } else if (state.temporalScope === "historical") {
+    const cnt = state.summary?.historical_stats?.total_detections ?? (state.geoJson?.features?.filter(f => !f.properties.is_nrt).length || 0);
+    scopeDesc.innerHTML = `Active Scope: <b>90-Day Historical Archive Baseline</b> (${cnt} archival detections).`;
+  } else {
+    const cnt = state.summary?.total_detections ?? (state.geoJson?.features?.length || 0);
+    scopeDesc.innerHTML = `Active Scope: <b>Unified Dual-Temporal Layer</b> (${cnt} combined detections).`;
+  }
+}
+
 function currentFilter(klass) {
   const conds = [["==", ["get", "class"], klass]];
   if (!state.visible.has(klass)) conds.push(["==", 1, 0]);
+  if (state.temporalScope === "nrt") {
+    conds.push(["==", ["coalesce", ["get", "is_nrt"], false], true]);
+  } else if (state.temporalScope === "historical") {
+    conds.push(["!=", ["coalesce", ["get", "is_nrt"], false], true]);
+  }
   conds.push([">=", ["coalesce", ["get", "frp_mw"], -1], state.minFrp]);
   if (state.minThreatScore > 0) {
     conds.push([">=", ["coalesce", ["get", "threat_score_val"], 0], state.minThreatScore]);
@@ -1036,6 +1365,11 @@ function applyFilters() {
     const haloConds = [
       [">=", ["coalesce", ["get", "frp_mw"], -1], state.minFrp],
     ];
+    if (state.temporalScope === "nrt") {
+      haloConds.push(["==", ["coalesce", ["get", "is_nrt"], false], true]);
+    } else if (state.temporalScope === "historical") {
+      haloConds.push(["!=", ["coalesce", ["get", "is_nrt"], false], true]);
+    }
     if (state.visible.size === 0) {
       haloConds.push(["==", 1, 0]);
     } else if (state.visible.size < 3) {
@@ -1061,6 +1395,8 @@ function applyFilters() {
 }
 
 function featureMatches(p) {
+  if (state.temporalScope === "nrt" && !p.is_nrt) return false;
+  if (state.temporalScope === "historical" && p.is_nrt) return false;
   if (!state.visible.has(p.class)) return false;
   const threatLvl = p.threat_level || (p.threat_score && p.threat_score.level) || "LOW";
   if (!state.visibleThreats.has(threatLvl)) return false;
@@ -1074,46 +1410,45 @@ function featureMatches(p) {
 }
 
 function renderSummaryChips() {
-  if (!state.summary) return;
+  if (!state.summary || !state.geoJson || !state.geoJson.features) return;
+
+  // Filter features matching the active temporal scope
+  let activeFeatures = state.geoJson.features;
+  if (state.temporalScope === "nrt") {
+    activeFeatures = activeFeatures.filter(f => f.properties.is_nrt);
+  } else if (state.temporalScope === "historical") {
+    activeFeatures = activeFeatures.filter(f => !f.properties.is_nrt);
+  }
 
   // Class counts
-  if (state.summary.by_class) {
-    [1, 2, 3].forEach((k) => {
-      const c = state.summary.by_class[String(k)];
-      const el = document.querySelector(`.chip[data-class="${k}"]`);
-      if (el) {
-        const nEl = el.querySelector(".n");
-        if (nEl) nEl.textContent = c ? c.count : 0;
-      }
-    });
-  }
+  [1, 2, 3].forEach((k) => {
+    const count = activeFeatures.filter(f => f.properties.class === k).length;
+    const el = document.querySelector(`.chip[data-class="${k}"]`);
+    if (el) {
+      const nEl = el.querySelector(".n");
+      if (nEl) nEl.textContent = count;
+    }
+  });
 
   // Threat counts
-  let threatCounts = state.summary.by_threat;
-  if (!threatCounts && state.geoJson && state.geoJson.features) {
-    threatCounts = { CRITICAL: 0, HIGH: 0, MODERATE: 0, LOW: 0 };
-    state.geoJson.features.forEach((f) => {
-      const lvl = f.properties.threat_level || (f.properties.threat_score && f.properties.threat_score.level) || "LOW";
-      threatCounts[lvl] = (threatCounts[lvl] || 0) + 1;
-    });
-  }
+  const threatCounts = { CRITICAL: 0, HIGH: 0, MODERATE: 0, LOW: 0 };
+  activeFeatures.forEach((f) => {
+    const lvl = f.properties.threat_level || (f.properties.threat_score && f.properties.threat_score.level) || "LOW";
+    threatCounts[lvl] = (threatCounts[lvl] || 0) + 1;
+  });
 
-  if (threatCounts) {
-    ["CRITICAL", "HIGH", "MODERATE", "LOW"].forEach((tier) => {
-      const el = document.querySelector(`.chip[data-threat="${tier}"]`);
-      if (el) {
-        const nEl = el.querySelector(".n");
-        if (nEl) nEl.textContent = threatCounts[tier] || 0;
-      }
-    });
-  }
+  ["CRITICAL", "HIGH", "MODERATE", "LOW"].forEach((tier) => {
+    const el = document.querySelector(`.chip[data-threat="${tier}"]`);
+    if (el) {
+      const nEl = el.querySelector(".n");
+      if (nEl) nEl.textContent = threatCounts[tier] || 0;
+    }
+  });
 
   // Threat index badge in header
-  const meanScore = state.summary.mean_threat_score != null
-    ? state.summary.mean_threat_score
-    : (state.geoJson && state.geoJson.features && state.geoJson.features.length)
-      ? Math.round(state.geoJson.features.reduce((acc, f) => acc + (f.properties.threat_score_val || 0), 0) / state.geoJson.features.length)
-      : null;
+  const meanScore = activeFeatures.length
+    ? Math.round(activeFeatures.reduce((acc, f) => acc + (f.properties.threat_score_val || 0), 0) / activeFeatures.length)
+    : null;
 
   const idxBadge = $("threat-index-badge");
   if (idxBadge) {
@@ -1259,7 +1594,7 @@ function renderInspector(p) {
     <div class="card-block">
       <div class="card-title">
         <span>Stefan-Boltzmann Radiative Physics</span>
-        <span style="color:#38bdf8">Doelling-Dozier Inversion</span>
+        <span style="color:#38bdf8">Radiant Area &amp; Temp Proxy</span>
       </div>
       <div class="phys-grid">
         <div class="phys-stat">
@@ -1282,15 +1617,15 @@ function renderInspector(p) {
       <div class="phys-verdict">${physics.verdict}</div>
     </div>
 
-    <!-- Dual-Engine ML Consensus Card -->
+    <!-- Dual-Engine Statistical Classifier Consensus Card -->
     <div class="card-block">
       <div class="card-title">
-        <span>Dual-Engine ML Ensemble</span>
+        <span>Statistical Classification Engine</span>
         <span style="color:${xai.model_concordance.is_concordant ? '#34d399' : '#f87171'}">
           ${xai.model_concordance.is_concordant ? '✓ Concordant' : '⚠ Divergent'} (${xai.model_concordance.agreement_score_pct}%)
         </span>
       </div>
-      <div style="font-size:10px;color:#7d93bb;margin-bottom:6px">Ensemble Model: ${ml.model_family || 'Calibrated GBDT'} (${ml.trees_count || 128} trees)</div>
+      <div style="font-size:10px;color:#7d93bb;margin-bottom:6px">Model Architecture: ${ml.model_family || 'Calibrated Multinomial Logistic Model'}</div>
       
       <div class="prob-row">
         <span style="color:#f59e0b;font-weight:600;min-width:75px">1. Flare:</span>
@@ -1309,11 +1644,11 @@ function renderInspector(p) {
       </div>
     </div>
 
-    <!-- Explainable AI (XAI) Attribution Card -->
+    <!-- Deterministic Evidence Attribution Card -->
     <div class="card-block">
       <div class="card-title">
-        <span>Forensic XAI Attributions</span>
-        <span style="color:#60a5fa">Feature Weight</span>
+        <span>Deterministic Evidence Attributions</span>
+        <span style="color:#60a5fa">Evidence Weight</span>
       </div>
       <div style="font-size:10.5px;color:#cbd5e1;line-height:1.35;margin-bottom:8px">
         ${xai.forensic_summary}
@@ -1334,6 +1669,7 @@ function renderInspector(p) {
       <div class="card-title">
         <span>Spatial & Sensor Telemetry</span>
       </div>
+      <div class="kv"><b>Observation Scope</b><span style="color:${p.is_nrt ? '#10b981' : '#93c5fd'};font-weight:700">${p.is_nrt ? "● Near-Real-Time (5-Day Swath)" : "🏛️ 90-Day Archival Baseline"}</span></div>
       <div class="kv"><b>Classification</b><span>${p.class} — ${p.class_label}</span></div>
       <div class="kv"><b>Fire Radiative Power (FRP)</b><span><b>${p.frp_mw != null ? Number(p.frp_mw).toFixed(2) : "—"} MW</b></span></div>
       <div class="kv"><b>Brightness Temp. (T_4)</b><span>${p.brightness_temp_k != null ? Number(p.brightness_temp_k).toFixed(1) : "—"} K</span></div>
@@ -1371,6 +1707,7 @@ function showAnomalyPopup(p) {
       `  <span class="threat-pill ${threat.level}" style="font-size:9.5px;padding:1px 5px">${threat.level} · ${threat.score}</span>` +
       `</div>` +
       `<table class="pop-rows">` +
+      `<tr><td>Feed Scope</td><td><span style="color:${p.is_nrt ? '#10b981' : '#93c5fd'};font-weight:700">${p.is_nrt ? "● Near-Real-Time (5D)" : "🏛️ Archive (90D)"}</span></td></tr>` +
       `<tr><td>Detection ID</td><td style="font-family:monospace;color:#93c5fd">${p.id || "—"}</td></tr>` +
       `<tr><td>Fire Radiative Power</td><td><b>${p.frp_mw != null ? Number(p.frp_mw).toFixed(2) : "—"} MW</b></td></tr>` +
       `<tr><td>Flame Temperature (T_f)</td><td style="color:#f59e0b"><b>${physics.estimated_flame_temp_k || "—"} K</b></td></tr>` +
@@ -1510,6 +1847,46 @@ function bindFilters() {
   }
 
   if ($("close-inspector")) $("close-inspector").addEventListener("click", () => renderInspector(null));
+
+  // Scope selector (NRT vs Archive vs Unified)
+  document.querySelectorAll("#scope-selector .scope-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const scope = btn.dataset.scope;
+      state.temporalScope = scope;
+      document.querySelectorAll("#scope-selector .scope-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      updateScopeUI();
+      applyFilters();
+      renderSummaryChips();
+      setStatus(`Switched temporal scope to: ${scope === "nrt" ? "Near-Real-Time (5-Day Swath)" : scope === "historical" ? "Historical Archive (90-Day Baseline)" : "Unified View"}`);
+    });
+  });
+
+  // Reset trend filter
+  const resetTrendBtn = $("reset-trend-filter");
+  if (resetTrendBtn) {
+    resetTrendBtn.addEventListener("click", () => {
+      state.dateFrom = "";
+      state.dateTo = "";
+      if ($("dfrom")) $("dfrom").value = "";
+      if ($("dto")) $("dto").value = "";
+      applyFilters();
+      renderSummaryChips();
+      setStatus("Reset temporal date filters across archive");
+    });
+  }
+
+  // Toggle facilities list accordion
+  const toggleFacHeader = $("toggle-facilities-header");
+  const facListContainer = $("facilities-list-container");
+  const facArrow = $("facilities-toggle-arrow");
+  if (toggleFacHeader && facListContainer) {
+    toggleFacHeader.addEventListener("click", () => {
+      const isHidden = facListContainer.style.display === "none";
+      facListContainer.style.display = isHidden ? "block" : "none";
+      if (facArrow) facArrow.textContent = isHidden ? "▼" : "▶";
+    });
+  }
 
   if ($("refresh")) {
     $("refresh").addEventListener("click", async () => {
