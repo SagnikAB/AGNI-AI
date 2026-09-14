@@ -170,19 +170,23 @@ console.log(`  ✓ Agricultural Residue Case C: Class 3 (pNoise = ${(caseC.pNois
 // ------------------------------------------------------------------------------
 console.log("▶ Testing Active HTTP Endpoints on port 3000...");
 
-function fetchJson(path) {
+function fetchJson(path, options = {}) {
   return new Promise((resolve, reject) => {
-    http.get({ hostname: "localhost", port: 3000, path }, (res) => {
-      let body = "";
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => {
-        try {
-          resolve({ status: res.statusCode, data: JSON.parse(body) });
-        } catch (e) {
-          reject(new Error(`Failed parsing JSON from ${path}: ${body.slice(0, 100)}`));
-        }
-      });
-    }).on("error", reject);
+    const req = http.request(
+      { hostname: "localhost", port: 3000, path, method: options.method || "GET" },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode, data: JSON.parse(body) });
+          } catch (e) {
+            reject(new Error(`Failed parsing JSON from ${path}: ${body.slice(0, 100)}`));
+          }
+        });
+      }
+    ).on("error", reject);
+    req.end();
   });
 }
 
@@ -204,7 +208,23 @@ async function verifyServer() {
     const stats = await fetchJson("/api/v1/stats/summary");
     assert.strictEqual(stats.status, 200, "Expected /api/v1/stats/summary status 200");
     assert(stats.data.total_detections > 0, "Expected non-zero detection count");
-    console.log(`  ✓ /api/v1/stats/summary operational (${stats.data.total_detections} anomalies indexed)`);
+    assert(stats.data.feed_status === "LIVE" || stats.data.feed_status === "STALE", "Expected feed_status in stats");
+    assert(stats.data.scan_interval_s >= 10, "Expected scan_interval_s >= 10");
+    console.log(`  ✓ /api/v1/stats/summary operational (${stats.data.total_detections} anomalies indexed, feed: ${stats.data.feed_status})`);
+
+    // 3b. Real-time thermal scan status & trigger
+    const scanStatus = await fetchJson("/api/v1/scan/status");
+    assert.strictEqual(scanStatus.status, 200, "Expected /api/v1/scan/status status 200");
+    assert(typeof scanStatus.data.is_live === "boolean", "Expected is_live boolean");
+    assert(scanStatus.data.scan_interval_s >= 10, "Expected valid scan_interval_s");
+    assert(scanStatus.data.total_detections > 0, "Expected non-zero detections in scan status");
+    console.log(`  ✓ /api/v1/scan/status operational (feed: ${scanStatus.data.status}, interval: ${scanStatus.data.scan_interval_s}s)`);
+
+    const scanNow = await fetchJson("/api/v1/scan/now", { method: "POST" });
+    assert.strictEqual(scanNow.status, 200, "Expected /api/v1/scan/now status 200");
+    assert(scanNow.data.status === "ok" || scanNow.data.status === "warning", "Expected scan result status");
+    assert(typeof scanNow.data.new_detections === "number", "Expected new_detections count");
+    console.log(`  ✓ /api/v1/scan/now operational (${scanNow.data.message})`);
 
     // 4. Historical facilities
     const facilities = await fetchJson("/api/v1/historical/facilities");

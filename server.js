@@ -27,13 +27,83 @@ const WILDFIRE_FRP_MIN_MW = parseFloat(process.env.WILDFIRE_FRP_MIN_MW || "6.0")
 const WILDFIRE_BT_MIN_K = parseFloat(process.env.WILDFIRE_BT_MIN_K || "330.0");
 const REFRESH_TTL_MINUTES = parseInt(process.env.REFRESH_TTL_MINUTES || "15", 10);
 const REFRESH_MIN_INTERVAL_S = parseInt(process.env.REFRESH_MIN_INTERVAL_S || "60", 10);
+const NRT_SCAN_INTERVAL_S = Math.max(
+  10,
+  parseInt(process.env.NRT_SCAN_INTERVAL_S || process.env.SCAN_INTERVAL_S || "60", 10)
+);
+
+function getObservationKey(row) {
+  const lat = Number(row.latitude).toFixed(4);
+  const lon = Number(row.longitude).toFixed(4);
+  const time = String(row.acq_time || 0).padStart(4, "0");
+  const sat = String(row.satellite || "").trim();
+  const inst = String(row.instrument || "").trim();
+  return `${row.acq_date}_${time}_${sat}_${inst}_${lat}_${lon}`;
+}
 
 const REAL_DATA_CACHE_PATH = path.join(__dirname, "data", "real_firms_india.json");
 const OSM_CACHE_PATH = path.join(__dirname, "data", "osm_industrial_plants.json");
+const SPATIAL_INDEX_PATH = path.join(__dirname, "data", "india_spatial_index.json");
+const INDIA_OUTLINE_PATH = path.join(__dirname, "data", "india_outline.geojson");
+
+let indiaSpatialIndex = null;
+try {
+  if (fs.existsSync(SPATIAL_INDEX_PATH)) {
+    indiaSpatialIndex = JSON.parse(fs.readFileSync(SPATIAL_INDEX_PATH, "utf8"));
+    console.log(`[AGNI-AI] Loaded India Spatial Index (${indiaSpatialIndex.states?.length || 0} States/UTs, ${indiaSpatialIndex.eez_boxes?.length || 0} EEZ zones)`);
+  }
+} catch (err) {
+  console.warn("[AGNI-AI] Error loading India spatial index:", err.message);
+}
+
+function pointInPoly(pt, polygon) {
+  const x = pt[0], y = pt[1];
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0], yi = polygon[i][1];
+    const xj = polygon[j][0], yj = polygon[j][1];
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function classifyLocationInIndia(lon, lat) {
+  if (!indiaSpatialIndex) {
+    const inBbox = lon >= 68.0 && lon <= 97.5 && lat >= 6.5 && lat <= 37.2;
+    return { in_india: inBbox, state: inBbox ? "National Territory" : null, is_offshore: false };
+  }
+
+  // 1. Maritime EEZ / Offshore platforms (Mumbai High, KG Basin, Gulf of Kutch/Khambhat)
+  if (indiaSpatialIndex.eez_boxes) {
+    for (const eez of indiaSpatialIndex.eez_boxes) {
+      const [x1, y1, x2, y2] = eez.bbox;
+      if (lon >= x1 && lon <= x2 && lat >= y1 && lat <= y2) {
+        return { in_india: true, state: eez.name, is_offshore: true };
+      }
+    }
+  }
+
+  // 2. Exact polygon check against India's States & Union Territories
+  if (indiaSpatialIndex.states) {
+    for (const s of indiaSpatialIndex.states) {
+      const [minX, minY, maxX, maxY] = s.bbox;
+      if (lon >= minX - 0.05 && lon <= maxX + 0.05 && lat >= minY - 0.05 && lat <= maxY + 0.05) {
+        for (const p of s.polygons) {
+          if (pointInPoly([lon, lat], p)) {
+            return { in_india: true, state: s.name, is_offshore: false };
+          }
+        }
+      }
+    }
+  }
+
+  return { in_india: false, state: null, is_offshore: false };
+}
 
 const DEFAULT_CENTER_LON = 78.9629;
-const DEFAULT_CENTER_LAT = 20.5937;
-const DEFAULT_ZOOM = 5;
+const DEFAULT_CENTER_LAT = 22.5000;
+const DEFAULT_ZOOM = 4.8;
 
 const ESRI_DARK_TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
@@ -717,7 +787,21 @@ function loadRealFirmsCache() {
       const raw = fs.readFileSync(REAL_DATA_CACHE_PATH, "utf8");
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        // Filter strictly to Republic of India territorial boundaries and maritime EEZ
+        const filtered = [];
+        for (const r of parsed) {
+          const loc = classifyLocationInIndia(r.longitude, r.latitude);
+          if (loc.in_india) {
+            filtered.push({
+              ...r,
+              state: r.state || loc.state,
+              country: "India",
+              is_offshore: Boolean(loc.is_offshore),
+            });
+          }
+        }
+        console.log(`[AGNI-AI] Loaded telemetry cache: ${filtered.length} authentic thermal detections strictly within India (excluded ${parsed.length - filtered.length} non-India detections).`);
+        return filtered;
       }
     }
   } catch (err) {
@@ -760,22 +844,29 @@ function parseFirmsCsv(csvText, sourceName, defaultSat, defaultInst) {
     const lat = parseFloat(parts[latIdx]);
     const lon = parseFloat(parts[lonIdx]);
     if (lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon) {
-      rows.push({
-        latitude: lat,
-        longitude: lon,
-        bright_ti4: btIdx !== -1 ? parseFloat(parts[btIdx]) || 0 : 0,
-        bright_ti5: bt5Idx !== -1 ? parseFloat(parts[bt5Idx]) || 0 : 0,
-        frp: frpIdx !== -1 ? parseFloat(parts[frpIdx]) || 0 : 0,
-        acq_date: parts[dateIdx],
-        acq_time: parseInt(parts[timeIdx] || "0", 10),
-        satellite: satIdx !== -1 && parts[satIdx] ? parts[satIdx] : defaultSat,
-        instrument: instIdx !== -1 && parts[instIdx] ? parts[instIdx] : defaultInst,
-        source: sourceName,
-        confidence: parts[confIdx] || "nominal",
-        daynight: parts[dnIdx] || "D",
-        is_nrt: true,
-        temporal_scope: "nrt",
-      });
+      // Strictly concentrate only on India (Territorial Landmass + Maritime EEZ)
+      const loc = classifyLocationInIndia(lon, lat);
+      if (loc.in_india) {
+        rows.push({
+          latitude: lat,
+          longitude: lon,
+          state: loc.state,
+          country: "India",
+          is_offshore: Boolean(loc.is_offshore),
+          bright_ti4: btIdx !== -1 ? parseFloat(parts[btIdx]) || 0 : 0,
+          bright_ti5: bt5Idx !== -1 ? parseFloat(parts[bt5Idx]) || 0 : 0,
+          frp: frpIdx !== -1 ? parseFloat(parts[frpIdx]) || 0 : 0,
+          acq_date: parts[dateIdx],
+          acq_time: parseInt(parts[timeIdx] || "0", 10),
+          satellite: satIdx !== -1 && parts[satIdx] ? parts[satIdx] : defaultSat,
+          instrument: instIdx !== -1 && parts[instIdx] ? parts[instIdx] : defaultInst,
+          source: sourceName,
+          confidence: parts[confIdx] || "nominal",
+          daynight: parts[dnIdx] || "D",
+          is_nrt: true,
+          temporal_scope: "nrt",
+        });
+      }
     }
   }
   return rows;
@@ -783,21 +874,29 @@ function parseFirmsCsv(csvText, sourceName, defaultSat, defaultInst) {
 
 async function fetchLiveFirmsData() {
   const allRows = [];
+  let hadSuccessfulFeed = false;
+  let lastErr = null;
 
   // 1. If MAP_KEY provided, query NASA FIRMS REST API
   if (MAP_KEY) {
     const sources = ["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT", "VIIRS_NOAA21_NRT", "MODIS_NRT"];
-    for (const src of sources) {
-      try {
+    const results = await Promise.allSettled(
+      sources.map(async (src) => {
         const url = `${FIRMS_BASE_URL}/api/area/csv/${MAP_KEY}/${src}/${AOI}/${NRT_WINDOW_DAYS}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
         if (res.ok) {
           const csv = await res.text();
-          const parsed = parseFirmsCsv(csv, src, "VIIRS", "VIIRS");
-          allRows.push(...parsed);
+          return parseFirmsCsv(csv, src, "VIIRS", "VIIRS");
         }
-      } catch (err) {
-        console.warn(`[AGNI-AI] FIRMS API fetch error for ${src}:`, err.message);
+        throw new Error(`HTTP ${res.status}`);
+      })
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && Array.isArray(r.value)) {
+        allRows.push(...r.value);
+        hadSuccessfulFeed = true;
+      } else if (r.status === "rejected") {
+        lastErr = r.reason;
       }
     }
   }
@@ -809,26 +908,34 @@ async function fetchLiveFirmsData() {
       { url: `${FIRMS_BASE_URL}/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_7d.csv`, name: "VIIRS_NOAA20_NRT", sat: "NOAA-20", inst: "VIIRS" },
       { url: `${FIRMS_BASE_URL}/data/active_fire/modis-c6.1/csv/MODIS_C6_1_Global_7d.csv`, name: "MODIS_NRT", sat: "Terra/Aqua", inst: "MODIS" }
     ];
-    for (const feed of publicFeeds) {
-      try {
-        const res = await fetch(feed.url, { signal: AbortSignal.timeout(30000) });
+
+    const results = await Promise.allSettled(
+      publicFeeds.map(async (feed) => {
+        const res = await fetch(feed.url, { signal: AbortSignal.timeout(3500) });
         if (res.ok) {
           const csv = await res.text();
-          const parsed = parseFirmsCsv(csv, feed.name, feed.sat, feed.inst);
-          allRows.push(...parsed);
+          return parseFirmsCsv(csv, feed.name, feed.sat, feed.inst);
         }
-      } catch (err) {
-        console.warn(`[AGNI-AI] Public FIRMS feed error for ${feed.name}:`, err.message);
+        throw new Error(`HTTP ${res.status}`);
+      })
+    );
+
+    for (const r of results) {
+      if (r.status === "fulfilled" && Array.isArray(r.value)) {
+        allRows.push(...r.value);
+        hadSuccessfulFeed = true;
+      } else if (r.status === "rejected") {
+        lastErr = r.reason;
       }
     }
   }
 
-  if (allRows.length > 0) {
-    saveRealFirmsCache(allRows);
-    return allRows;
-  }
-
-  return loadRealFirmsCache();
+  return {
+    ok: hadSuccessfulFeed || allRows.length > 0,
+    rows: allRows,
+    fromNetwork: allRows.length > 0,
+    error: lastErr ? lastErr.message : null,
+  };
 }
 
 // ==============================================================================
@@ -1084,6 +1191,9 @@ function classifyDataset(rawRows, windowDays = PERSISTENCE_WINDOW_DAYS, industri
       operator: history.operator,
       latitude: Math.round(row.latitude * 100000) / 100000,
       longitude: Math.round(row.longitude * 100000) / 100000,
+      state: row.state || (matchedPlant && matchedPlant.state) || "National Territory",
+      country: "India",
+      is_offshore: Boolean(row.is_offshore),
       snapped_lat: row.snapped_lat,
       snapped_lon: row.snapped_lon,
       physics_model: physicsOutput,
@@ -1131,6 +1241,9 @@ function toGeoJson(rows) {
       operator: r.operator,
       latitude: r.latitude,
       longitude: r.longitude,
+      state: r.state || "National Territory",
+      country: "India",
+      is_offshore: Boolean(r.is_offshore),
       snapped_lat: r.snapped_lat,
       snapped_lon: r.snapped_lon,
       physics_model: r.physics_model,
@@ -1339,7 +1452,10 @@ function computeFacilityDossiers(anomalies, plants = PLANTS) {
 // State & Pipeline In-Memory Cache (Real NASA Telemetry)
 // ==============================================================================
 const initialRealRows = loadRealFirmsCache();
-const initialClassified = classifyDataset(initialRealRows, PERSISTENCE_WINDOW_DAYS, PLANTS);
+let rawObservationsPool = [...initialRealRows];
+let knownObservationKeys = new Set(rawObservationsPool.map(getObservationKey));
+
+const initialClassified = classifyDataset(rawObservationsPool, PERSISTENCE_WINDOW_DAYS, PLANTS);
 const initialNrtStats = computeNrtStats(initialClassified, NRT_WINDOW_DAYS);
 const initialHistStats = computeHistoricalStats(initialClassified);
 const initialTimeSeries = computeTimeSeries(initialClassified);
@@ -1347,10 +1463,17 @@ const initialFacilities = computeFacilityDossiers(initialClassified, PLANTS);
 
 const state = {
   anomalies: initialClassified,
+  raw_observations_count: rawObservationsPool.length,
   industrial_sites: PLANTS,
   industrial_sites_count: PLANTS.length,
   industrial_count: PLANTS.length,
   updated_at_utc: new Date().toISOString(),
+  last_scan_utc: new Date().toISOString(),
+  last_successful_fetch_utc: new Date().toISOString(),
+  feed_status: "LIVE",
+  data_version: 1,
+  last_scan_new_count: 0,
+  scan_in_progress: false,
   window_days: PERSISTENCE_WINDOW_DAYS,
   observation_window_days: PERSISTENCE_WINDOW_DAYS,
   nrt_window_days: NRT_WINDOW_DAYS,
@@ -1366,43 +1489,81 @@ const state = {
 
 let lastRefreshAttempt = 0;
 
-async function refreshPipeline() {
-  lastRefreshAttempt = Date.now();
-  try {
-    const rows = await fetchLiveFirmsData();
-    let industrialSites = loadOsmIndustrialPlants();
+async function runThermalScan(force = false) {
+  if (state.scan_in_progress && !force) {
+    return { ok: true, new_count: 0, total: state.anomalies.length };
+  }
+  state.scan_in_progress = true;
+  state.last_scan_utc = new Date().toISOString();
 
-    if (rows && rows.length > 0) {
-      try {
-        industrialSites = await fetchOverpassIndustrial(rows, OSM_SEARCH_RADIUS_M);
-      } catch (e) {
-        industrialSites = loadOsmIndustrialPlants();
+  try {
+    const fetchRes = await fetchLiveFirmsData();
+    let newRows = [];
+
+    if (fetchRes && fetchRes.rows && fetchRes.rows.length > 0) {
+      state.last_successful_fetch_utc = new Date().toISOString();
+      for (const r of fetchRes.rows) {
+        const key = getObservationKey(r);
+        if (!knownObservationKeys.has(key)) {
+          knownObservationKeys.add(key);
+          newRows.push(r);
+        }
       }
+    } else if (fetchRes && fetchRes.ok) {
+      state.last_successful_fetch_utc = new Date().toISOString();
     }
 
-    const classified = classifyDataset(rows, PERSISTENCE_WINDOW_DAYS, industrialSites);
-    state.anomalies = classified;
-    state.industrial_sites = industrialSites;
-    state.industrial_sites_count = industrialSites.length;
-    state.industrial_count = industrialSites.length;
-    state.updated_at_utc = new Date().toISOString();
-    state.sources = Array.from(new Set(classified.map((c) => c.source))).sort();
-    state.window_days = PERSISTENCE_WINDOW_DAYS;
-    state.observation_window_days = PERSISTENCE_WINDOW_DAYS;
-    state.nrt_stats = computeNrtStats(classified, NRT_WINDOW_DAYS);
-    state.historical_stats = computeHistoricalStats(classified);
-    state.time_series = computeTimeSeries(classified);
-    state.facilities = computeFacilityDossiers(classified, industrialSites);
-    state.demo_mode = false;
-    state.status = "ready";
-    state.last_error = null;
-    return { ok: true, count: classified.length };
+    if (newRows.length > 0) {
+      console.log(`[AGNI-AI] Live thermal scan identified ${newRows.length} new observations. Ingesting...`);
+      rawObservationsPool.push(...newRows);
+      saveRealFirmsCache(rawObservationsPool);
+
+      const industrialSites = loadOsmIndustrialPlants();
+      const classified = classifyDataset(rawObservationsPool, PERSISTENCE_WINDOW_DAYS, industrialSites);
+
+      state.anomalies = classified;
+      state.raw_observations_count = rawObservationsPool.length;
+      state.industrial_sites = industrialSites;
+      state.industrial_sites_count = industrialSites.length;
+      state.industrial_count = industrialSites.length;
+      state.updated_at_utc = new Date().toISOString();
+      state.data_version = (state.data_version || 1) + 1;
+      state.sources = Array.from(new Set(classified.map((c) => c.source))).sort();
+      state.nrt_stats = computeNrtStats(classified, NRT_WINDOW_DAYS);
+      state.historical_stats = computeHistoricalStats(classified);
+      state.time_series = computeTimeSeries(classified);
+      state.facilities = computeFacilityDossiers(classified, industrialSites);
+      state.last_scan_new_count = newRows.length;
+      state.feed_status = "LIVE";
+      state.status = "ready";
+      state.last_error = null;
+    } else {
+      state.last_scan_new_count = 0;
+      state.feed_status = "LIVE";
+      state.status = "ready";
+      state.last_error = null;
+    }
+
+    state.scan_in_progress = false;
+    return { ok: true, new_count: newRows.length, total: state.anomalies.length };
   } catch (err) {
-    console.error("[AGNI-AI] Refresh pipeline error:", err);
-    state.status = state.anomalies.length ? "stale" : "initializing";
+    console.warn("[AGNI-AI] Real-time thermal scan warning:", err.message);
+    state.scan_in_progress = false;
+    state.last_scan_new_count = 0;
     state.last_error = err.message;
-    return { ok: false, message: err.message };
+    // Check age of last successful data acquisition
+    const ageMs = Date.now() - new Date(state.last_successful_fetch_utc || state.updated_at_utc).getTime();
+    if (ageMs > 15 * 60 * 1000) {
+      state.feed_status = "STALE";
+      state.status = "stale";
+    }
+    return { ok: false, message: err.message, total: state.anomalies.length };
   }
+}
+
+async function refreshPipeline() {
+  lastRefreshAttempt = Date.now();
+  return runThermalScan(true);
 }
 
 // ==============================================================================
@@ -1430,12 +1591,20 @@ app.get("/api/v1/config/public", (req, res) => {
     tile_url: tileUrl,
     attribution,
     demo_mode: state.demo_mode,
+    country: "Republic of India",
+    territory_scope: "National Landmass & Exclusive Economic Zone (EEZ)",
     aoi: AOI,
     window_days: state.window_days,
     observation_window_days: state.window_days,
     default_center: [DEFAULT_CENTER_LON, DEFAULT_CENTER_LAT],
     default_zoom: DEFAULT_ZOOM,
+    min_zoom: 4.0,
+    max_bounds: [[64.0, 5.0], [102.0, 38.5]],
     data_updated_at_utc: state.updated_at_utc,
+    last_scan_utc: state.last_scan_utc,
+    feed_status: state.feed_status,
+    scan_interval_s: NRT_SCAN_INTERVAL_S,
+    data_version: state.data_version,
     status: state.status,
   });
 });
@@ -1494,7 +1663,36 @@ const getAnalyticsSummary = (req, res) => {
     df.forEach((d) => uniquePixels.add(`${d.snapped_lat},${d.snapped_lon}`));
   }
 
+  // Compute Indian State / Territory breakdown
+  const stateBboxes = {};
+  if (indiaSpatialIndex && indiaSpatialIndex.states) {
+    for (const s of indiaSpatialIndex.states) {
+      stateBboxes[s.name] = s.bbox;
+    }
+  }
+  if (indiaSpatialIndex && indiaSpatialIndex.eez_boxes) {
+    for (const e of indiaSpatialIndex.eez_boxes) {
+      stateBboxes[e.name] = e.bbox;
+    }
+  }
+
+  const stateCounts = {};
+  df.forEach((d) => {
+    const sName = d.state || "National Territory";
+    stateCounts[sName] = (stateCounts[sName] || 0) + 1;
+  });
+  const stateBreakdown = Object.entries(stateCounts)
+    .map(([name, count]) => ({
+      name,
+      count,
+      bbox: stateBboxes[name] || null,
+    }))
+    .sort((a, b) => b.count - a.count);
+
   res.json({
+    country: "Republic of India",
+    territory_scope: "National Landmass & Exclusive Economic Zone (EEZ)",
+    state_breakdown: stateBreakdown,
     by_class: byClass,
     by_threat: byThreat,
     mean_threat_score: meanThreatScore,
@@ -1512,6 +1710,11 @@ const getAnalyticsSummary = (req, res) => {
     unique_pixels: uniquePixels.size,
     date_min: dateMin,
     date_max: dateMax,
+    scan_interval_s: NRT_SCAN_INTERVAL_S,
+    last_scan_utc: state.last_scan_utc,
+    feed_status: state.feed_status,
+    data_version: state.data_version,
+    new_detections_last_scan: state.last_scan_new_count || 0,
     nrt_stats: state.nrt_stats,
     historical_stats: state.historical_stats,
     facilities: state.facilities,
@@ -1548,6 +1751,16 @@ app.get("/api/v1/historical/facilities", (req, res) => {
   });
 });
 
+// India National & State Boundary GeoJSON endpoint
+app.get("/api/v1/india/outline", (req, res) => {
+  if (fs.existsSync(INDIA_OUTLINE_PATH)) {
+    res.setHeader("Content-Type", "application/geo+json");
+    res.sendFile(INDIA_OUTLINE_PATH);
+  } else {
+    res.json({ type: "FeatureCollection", features: [] });
+  }
+});
+
 // Filtered Thermal Anomalies endpoint (GeoJSON, FR-API-01)
 app.get("/api/v1/thermal-anomalies", (req, res) => {
   if (!state.anomalies.length && state.status === "initializing") {
@@ -1560,12 +1773,17 @@ app.get("/api/v1/thermal-anomalies", (req, res) => {
   }
 
   let filtered = [...state.anomalies];
-  const { scope, date_from, date_to, classification, min_frp, min_threat_score, threat_level, max_results } = req.query;
+  const { scope, date_from, date_to, classification, min_frp, min_threat_score, threat_level, max_results, state: stateFilter } = req.query;
 
   if (scope === "nrt") {
     filtered = filtered.filter((d) => d.is_nrt);
   } else if (scope === "historical") {
     filtered = filtered.filter((d) => !d.is_nrt);
+  }
+
+  if (stateFilter) {
+    const sLower = String(stateFilter).trim().toLowerCase();
+    filtered = filtered.filter((d) => (d.state || "").toLowerCase().includes(sLower));
   }
 
   if (date_from) {
@@ -1616,6 +1834,40 @@ app.get("/api/v1/thermal-anomalies", (req, res) => {
   res.json(toGeoJson(filtered));
 });
 
+// Real-Time Thermal Scan Status endpoint
+app.get("/api/v1/scan/status", (req, res) => {
+  res.json({
+    status: state.feed_status,
+    is_live: state.feed_status === "LIVE",
+    scan_interval_s: NRT_SCAN_INTERVAL_S,
+    last_scan_utc: state.last_scan_utc,
+    last_updated_at_utc: state.updated_at_utc,
+    total_detections: state.anomalies.length,
+    raw_observations: state.raw_observations_count,
+    new_detections_last_scan: state.last_scan_new_count || 0,
+    data_version: state.data_version,
+    scanning: Boolean(state.scan_in_progress),
+    error: state.last_error,
+  });
+});
+
+// Trigger Instant Real-Time Thermal Scan
+app.post("/api/v1/scan/now", async (req, res) => {
+  const result = await runThermalScan(true);
+  res.json({
+    status: result.ok ? "ok" : "warning",
+    feed_status: state.feed_status,
+    new_detections: result.new_count || 0,
+    total_detections: state.anomalies.length,
+    last_scan_utc: state.last_scan_utc,
+    last_updated_at_utc: state.updated_at_utc,
+    data_version: state.data_version,
+    message: result.ok
+      ? (result.new_count > 0 ? `Detected and classified ${result.new_count} new thermal observation(s)` : "Scan complete: 0 new observations (catalog is current)")
+      : (result.message || "Scan encounter warning"),
+  });
+});
+
 // Refresh Endpoint (FR-API-04)
 app.post("/api/v1/refresh", async (req, res) => {
   const elapsedS = (Date.now() - lastRefreshAttempt) / 1000;
@@ -1639,6 +1891,8 @@ app.post("/api/v1/refresh", async (req, res) => {
     status: "ok",
     refreshed_at_utc: state.updated_at_utc,
     total_detections: state.anomalies.length,
+    new_detections: result.new_count || 0,
+    feed_status: state.feed_status,
   });
 });
 
@@ -1685,13 +1939,14 @@ refreshPipeline().then(() => {
 
 const isDirectRun = process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
 if (isDirectRun && !process.env.VERCEL) {
-  const timer = setInterval(() => {
-    refreshPipeline();
-  }, REFRESH_TTL_MINUTES * 60 * 1000);
-  timer.unref();
+  const scanTimer = setInterval(() => {
+    runThermalScan();
+  }, NRT_SCAN_INTERVAL_S * 1000);
+  scanTimer.unref();
 
   app.listen(PORT, HOST, () => {
     console.log(`[AGNI-AI] Server running on http://${HOST}:${PORT}`);
+    console.log(`[AGNI-AI] Real-time NASA FIRMS thermal scan active (interval: ${NRT_SCAN_INTERVAL_S}s)`);
   });
 }
 

@@ -106,6 +106,29 @@
       background: #173cff22; color: #6ea8ff; border: 1px solid #2b5bd7;
     }
     #mode-badge.live { background: #20e07022; color: #5ee09a; border-color: #1f9d55; }
+    #mode-badge.stale { background: rgba(245, 158, 11, 0.18); color: #f59e0b; border-color: #b45309; }
+    .scan-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 7px; border-radius: 10px; font-size: 9.5px;
+      font-weight: 600; background: #0f172a; color: #94a3b8;
+      border: 1px solid #1e293b; font-variant-numeric: tabular-nums;
+    }
+    .btn-scan-trigger {
+      background: #1e293b; color: #38bdf8; border: 1px solid #334155;
+      border-radius: 4px; padding: 2px 8px; font-size: 9.5px; font-weight: 700;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+      transition: all 0.15s ease;
+    }
+    .btn-scan-trigger:hover { background: #334155; color: #fff; border-color: #475569; }
+    .btn-scan-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+    #live-toast {
+      position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+      z-index: 35; background: rgba(11, 18, 32, 0.94);
+      border: 1px solid #10b981; color: #f1f5f9;
+      border-radius: 8px; padding: 6px 14px; font-size: 11px; font-weight: 600;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.55); display: none; align-items: center; gap: 8px;
+      backdrop-filter: blur(8px); pointer-events: none; transition: opacity 0.3s ease;
+    }
     #threat-index-badge {
       display: inline-block; padding: 2px 8px; border-radius: 10px;
       font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px;
@@ -279,6 +302,12 @@
 </head>
 <body>
 
+  <!-- Live Thermal Scan Toast Notification -->
+  <div id="live-toast" role="status" aria-live="polite">
+    <span class="live-dot"></span>
+    <span id="live-toast-text">Real-time scan active</span>
+  </div>
+
   <!-- WebGL map mount point (MapLibre GL JS renders into this div) -->
   <div id="map"></div>
 
@@ -298,6 +327,7 @@
       <div class="header-badges">
         <span id="mode-badge">LOADING</span>
         <span id="threat-index-badge">Threat Index: —</span>
+        <span id="scan-countdown" class="scan-pill" title="Next scheduled NASA FIRMS thermal scan">↻ 60s</span>
       </div>
     </header>
 
@@ -351,6 +381,10 @@
       <div class="sat-feed-bar">
         <span>Latest Satellite Pass: <b id="nrt-latest-pass" style="color:#f1f5f9">—</b></span>
         <span style="color:#38bdf8">4 Sensors</span>
+      </div>
+      <div class="sat-feed-bar" style="margin-top:5px; display:flex; justify-content:space-between; align-items:center;">
+        <span>Near-Real-Time Scan: <b id="scan-status-text" style="color:#10b981">Continuous (60s)</b></span>
+        <button id="btn-scan-now" type="button" class="btn-scan-trigger" title="Scan NASA FIRMS for newly available satellite passes">⚡ Scan Now</button>
       </div>
     </div>
 
@@ -519,6 +553,8 @@ const state = {
   temporalScope: "nrt", // "nrt" | "historical" | "all"
   dateFrom: "",
   dateTo: "",
+  currentDataVersion: 1,
+  lastUpdatedAt: null,
   booted: false,
 };
 
@@ -1120,6 +1156,7 @@ async function boot() {
       });
       await loadData();
       bindFilters();
+      startRealtimeThermalScanner();
     }
   });
 }
@@ -1137,7 +1174,17 @@ async function loadData(dateFrom = state.dateFrom, dateTo = state.dateTo) {
       summary = await api("/api/v1/stats/summary");
       anomalies = await api(`/api/v1/thermal-anomalies${qStr}`);
     } catch (netErr) {
-      console.warn("API request fallback to built-in synthetic dataset:", netErr);
+      console.warn("API request error:", netErr);
+      if (state.geoJson) {
+        // Keep real data, do not replace with fake data
+        setStatus(`Telemetry update delayed (${netErr.message}) — holding live dataset`, true);
+        const badge = $("mode-badge");
+        if (badge) {
+          badge.textContent = "▲ STALE · NASA FIRMS";
+          badge.className = "stale";
+        }
+        return;
+      }
       const fallback = buildClientFallbackDataset();
       summary = fallback.summary;
       anomalies = fallback.anomalies;
@@ -1145,6 +1192,8 @@ async function loadData(dateFrom = state.dateFrom, dateTo = state.dateTo) {
 
     state.summary = summary;
     state.geoJson = anomalies;
+    state.currentDataVersion = summary.data_version || 1;
+    state.lastUpdatedAt = summary.updated_at_utc;
 
     if ($("dfrom") && !$("dfrom").value && summary.date_min) $("dfrom").value = summary.date_min;
     if ($("dto") && !$("dto").value && summary.date_max) $("dto").value = summary.date_max;
@@ -1464,9 +1513,14 @@ function renderSummaryChips() {
 function renderMeta() {
   if (!state.summary) return;
   const s = state.summary;
+  const isLive = s.feed_status === "LIVE" || (s.status === "ready" && !s.demo_mode);
+
   if ($("meta")) {
     $("meta").innerHTML =
-      `Updated: <b>${fmtTime(s.updated_at_utc)}</b><br>` +
+      `Feed Status: <b style="color:${isLive ? '#10b981' : '#f59e0b'}">${isLive ? '● LIVE (NASA FIRMS Feed)' : '▲ STALE (Awaiting Satellite Swath)'}</b><br>` +
+      `Last updated: <b>${fmtTime(s.updated_at_utc)}</b><br>` +
+      `Last scan: <b>${fmtTime(s.last_scan_utc || s.updated_at_utc)}</b><br>` +
+      `Scan Interval: <b>Continuous (${s.scan_interval_s || 60}s)</b><br>` +
       `Industrial footprints: <b>${s.industrial_count}</b><br>` +
       `Observation window: <b>${s.window_days} days</b> (${s.date_min} → ${s.date_max})<br>` +
       `Sources: <b>${(s.sources || []).join(", ")}</b>`;
@@ -1475,11 +1529,145 @@ function renderMeta() {
   if (badge) {
     if (s.demo_mode) {
       badge.textContent = "DEMO DATA";
-      badge.classList.remove("live");
+      badge.className = "";
+    } else if (isLive) {
+      badge.textContent = "● LIVE · NASA FIRMS";
+      badge.className = "live";
     } else {
-      badge.textContent = "LIVE · NASA FIRMS";
-      badge.classList.add("live");
+      badge.textContent = "▲ STALE · NASA FIRMS";
+      badge.className = "stale";
     }
+  }
+}
+
+function showLiveToast(msg) {
+  const toast = $("live-toast");
+  const text = $("live-toast-text");
+  if (!toast || !text) return;
+  text.textContent = msg;
+  toast.style.display = "inline-flex";
+  toast.style.opacity = "1";
+  clearTimeout(toast._timeout);
+  toast._timeout = setTimeout(() => {
+    toast.style.opacity = "0";
+    setTimeout(() => { toast.style.display = "none"; }, 300);
+  }, 4500);
+}
+
+async function refreshThermalMapData(newCount = 0) {
+  try {
+    const qParts = [];
+    if (state.dateFrom) qParts.push(`date_from=${encodeURIComponent(state.dateFrom)}`);
+    if (state.dateTo) qParts.push(`date_to=${encodeURIComponent(state.dateTo)}`);
+    const qStr = qParts.length ? `?${qParts.join("&")}` : "";
+
+    const [summary, anomalies, scanStatus] = await Promise.all([
+      api("/api/v1/stats/summary"),
+      api(`/api/v1/thermal-anomalies${qStr}`),
+      api("/api/v1/scan/status")
+    ]);
+
+    state.summary = summary;
+    state.geoJson = anomalies;
+    state.currentDataVersion = scanStatus.data_version || ((state.currentDataVersion || 1) + 1);
+    state.lastUpdatedAt = scanStatus.last_updated_at_utc || summary.updated_at_utc;
+
+    // Seamlessly update MapLibre GL JS source WITHOUT page reload
+    if (map && map.getSource("anomalies")) {
+      map.getSource("anomalies").setData(anomalies);
+      applyFilters();
+    }
+
+    renderNrtTelemetry(summary.nrt_stats);
+    renderHistoricalArchive(summary.historical_stats, summary.time_series);
+    renderFacilityDossiers(summary.facilities);
+    updateScopeUI();
+    renderSummaryChips();
+    renderMeta();
+
+    if (newCount > 0) {
+      showLiveToast(`🔥 +${newCount} newly acquired thermal detection(s) classified & mapped!`);
+      setStatus(`Real-time update: ${newCount} new observation(s) ingested & scored without reload`);
+    }
+  } catch (err) {
+    console.warn("[AGNI-AI] Live data refresh error:", err);
+  }
+}
+
+function startRealtimeThermalScanner() {
+  const scanIntervalS = (state.config && state.config.scan_interval_s) || 60;
+  let countdown = scanIntervalS;
+
+  const countdownEl = $("scan-countdown");
+  const scanBtn = $("btn-scan-now");
+  const scanStatusText = $("scan-status-text");
+
+  // Visual countdown timer
+  setInterval(() => {
+    countdown--;
+    if (countdown <= 0) countdown = scanIntervalS;
+    if (countdownEl) countdownEl.textContent = `↻ ${countdown}s`;
+  }, 1000);
+
+  // Background status checker: continuously polls /api/v1/scan/status every 8 seconds
+  setInterval(async () => {
+    try {
+      const scanStatus = await api("/api/v1/scan/status");
+      if (!scanStatus) return;
+
+      const badge = $("mode-badge");
+      if (badge && !state.summary?.demo_mode) {
+        if (scanStatus.is_live) {
+          badge.textContent = "● LIVE · NASA FIRMS";
+          badge.className = "live";
+        } else {
+          badge.textContent = "▲ STALE · NASA FIRMS";
+          badge.className = "stale";
+        }
+      }
+
+      // If newly arrived thermal detections are detected, update map without page reload
+      if (
+        scanStatus.data_version &&
+        state.currentDataVersion &&
+        scanStatus.data_version > state.currentDataVersion
+      ) {
+        console.log(`[AGNI-AI] New thermal observations detected (v${scanStatus.data_version}). Updating map...`);
+        countdown = scanIntervalS;
+        await refreshThermalMapData(scanStatus.new_detections_last_scan);
+      }
+    } catch (err) {
+      const badge = $("mode-badge");
+      if (badge && !state.summary?.demo_mode) {
+        badge.textContent = "▲ STALE · NASA FIRMS";
+        badge.className = "stale";
+      }
+    }
+  }, 8000);
+
+  // Manual trigger button for instant thermal scan
+  if (scanBtn) {
+    scanBtn.addEventListener("click", async () => {
+      scanBtn.disabled = true;
+      scanBtn.textContent = "Scanning…";
+      if (scanStatusText) scanStatusText.textContent = "Scanning NASA FIRMS…";
+      try {
+        const res = await api("/api/v1/scan/now", { method: "POST" });
+        countdown = scanIntervalS;
+        if (res.new_detections > 0) {
+          await refreshThermalMapData(res.new_detections);
+        } else {
+          showLiveToast(`✓ Scan complete: ${res.total_detections} thermal observations verified current`);
+          setStatus(`Near-real-time scan complete — verified current against satellite swaths`);
+        }
+        if (scanStatusText) scanStatusText.textContent = `Continuous (${scanIntervalS}s)`;
+      } catch (err) {
+        setStatus(`Scan notice: ${err.message}`);
+      } finally {
+        scanBtn.disabled = false;
+        scanBtn.textContent = "⚡ Scan Now";
+      }
+    });
   }
 }
 
